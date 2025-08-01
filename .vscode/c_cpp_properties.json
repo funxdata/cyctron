@@ -1,0 +1,21 @@
+{
+    "configurations": [
+      {
+        "name": "Win32",
+        "includePath": [
+          "${workspaceFolder}/clib/mongoose",
+          "${workspaceFolder}/clib/libev",
+          "C:/soft/mgw64/lib/gcc/i686-w64-mingw32/13.3.0/include",
+          "C:/soft/mgw64/i686-w64-mingw32/include",
+          "C:/soft/mgw64/include"
+        ],
+        "defines": [],
+        "compilerPath": "C:/soft/mgw64/bin/gcc.exe",
+        "cStandard": "c11",
+        "cppStandard": "c++17",
+        "intelliSenseMode": "gcc-x86"
+      }
+    ],
+    "version": 4
+  }
+  
