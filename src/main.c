@@ -1,71 +1,70 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
 #include <string.h>
-#include <unistd.h>
-
+#include "log.h"
+#include "mongoose.h"
 #include "server.h"
-#include "task_queue.h"
 
-#define SERVER_PORT 44944
-#define THREAD_POOL_SIZE 4
-#define BUFFER_SIZE 1024
-
-void* worker_thread(void* arg) {
-    (void)arg;
-    char buffer[BUFFER_SIZE];
-    while (1) {
-        int client_fd = task_queue_pop();
-        ssize_t bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
-        if (bytes_read > 0) {
-            buffer[bytes_read] = '\0';
-            printf("Request received from fd %d:\n%s\n", client_fd, buffer);
-
-            const char* response =
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: text/plain\r\n"
-                "Content-Length: 13\r\n"
-                "\r\n"
-                "Hello, world!";
-
-            ssize_t bytes_written = write(client_fd, response, strlen(response));
-            if (bytes_written == -1) {
-                perror("write");
-            }
-        } else if (bytes_read == -1) {
-            perror("read");
-        } else {
-            printf("Client fd %d closed connection\n", client_fd);
-        }
-        close(client_fd);
-    }
-    return NULL;
+static void print_help(const char *prog) {
+    printf("Usage:\n");
+    printf("  %s start [-port <port>]   Start HTTP + WS server\n", prog);
+    printf("  %s stop Stop the server\n", prog);
+    printf("  %s reload Reload the server\n", prog);
+    printf("  %s help Show this help\n", prog);
 }
 
-int main(void) {
-    int listen_fd = setup_server_socket(SERVER_PORT);
-    if (listen_fd == -1) {
-        fprintf(stderr, "Failed to setup server socket\n");
-        return EXIT_FAILURE;
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        print_help(argv[0]);
+        return 1;
     }
 
-    task_queue_init();
+    if (strcmp(argv[1], "help") == 0 || strcmp(argv[1], "-help") == 0) {
+        print_help(argv[0]);
+        return 0;
+    } 
+    else if (strcmp(argv[1], "start") == 0) {
+        const char *host = "0.0.0.0";
+        const char *port = "44944";
 
-    pthread_t threads[THREAD_POOL_SIZE];
-    for (int i = 0; i < THREAD_POOL_SIZE; ++i) {
-        if (pthread_create(&threads[i], NULL, worker_thread, NULL) != 0) {
-            perror("pthread_create");
-            // 这里简单忽略失败
+        // 解析可选参数
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "-port") == 0 && i + 1 < argc) {
+                port = argv[i + 1];
+                i++;
+            }
         }
+
+        char addr[128];
+        // printf(".....................");
+        snprintf(addr, sizeof(addr), "http://%s:%s", host, port);
+
+        struct mg_mgr mgr;
+        mg_mgr_init(&mgr);
+
+        // 只监听一个端口
+        if (mg_http_listen(&mgr, addr, ev_handler, NULL) == NULL) {
+            log_info("Error starting HTTP+WS server on %s\n", addr);
+            return 1;
+        }
+
+        log_info("HTTP + WS server started on %s\n", addr);
+
+        while (1) {
+            mg_mgr_poll(&mgr, 50); // 50ms 保证 WS 心跳及时
+        }
+    } 
+    else if (strcmp(argv[1], "stop") == 0) {
+        log_info("Stopping server... (TODO: implement IPC or PID file)\n");
+    } 
+    else if (strcmp(argv[1], "reload") == 0) {
+        log_info("Reloading server... (TODO: implement reload logic)\n");
+    } 
+    else {
+        log_info("Unknown command: %s\n", argv[1]);
+        log_info(argv[0]);
+        return 1;
     }
 
-    printf("Server listening on port %d\n", SERVER_PORT);
-    if (run_event_loop(listen_fd) == -1) {
-        fprintf(stderr, "Error running event loop\n");
-        return EXIT_FAILURE;
-    }
-
-    // 实际退出时应加入清理线程等代码
-    close(listen_fd);
-    return EXIT_SUCCESS;
+    return 0;
 }

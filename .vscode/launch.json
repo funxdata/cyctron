@@ -1,17 +1,22 @@
 {
     "version": "0.2.0",
     "configurations": [
-      {
-        "name": "Debug LocalServer",
-        "type": "cppdbg",
-        "request": "launch",
-        "program": "${workspaceFolder}/build/bin/localserver",
-        "args": [],
-        "stopAtEntry": false,
-        "cwd": "${workspaceFolder}",
-        "environment": [],
-        "externalConsole": false,
-        "MIMode": "gdb"
-      }
+        {
+            "name": "Debug cyctron",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/cyctron",
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "MIMode": "gdb",
+            "externalConsole": true,
+            "setupCommands": [
+                {
+                    "description": "Enable pretty printing",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        }
     ]
-  }
+}
