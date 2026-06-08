@@ -1,0 +1,71 @@
+name: Build WinOS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      # ========================
+      # Checkout repository
+      # ========================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      # ========================
+      # Install dependencies
+      # ========================
+      - name: Install dependencies
+        run: |
+          choco install -y cmake ninja jq
+
+      # ========================
+      # Read version from JSON
+      # ========================
+      - name: Read version from JSON
+        id: version
+        shell: pwsh
+        run: |
+          $project = jq -r '.name' dytes.json
+          $version = jq -r '.version' dytes.json
+          echo "project=$project" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          echo "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      # ========================
+      # Configure CMake (MSVC + Ninja)
+      # ========================
+      - name: Configure CMake
+        run: cmake -S . -B build -G Ninja -DBUILD_TESTS=OFF
+
+      # ========================
+      # Build
+      # ========================
+      - name: Build
+        run: cmake --build build --config Release
+
+      # ========================
+      # Prepare upload directory
+      # ========================
+      - name: Prepare upload directory
+        run: |
+          mkdir upload
+          copy build\cyctron.exe upload\
+
+      # ========================
+      # Upload to UpYun S3
+      # ========================
+      - name: Upload to UpYun S3
+        uses: shallwefootball/s3-upload-action@master
+        with:
+          aws_key_id: ${{ secrets.UPYUN_API_KEY }}
+          aws_secret_access_key: ${{ secrets.UPYUN_API_SECRET }}
+          aws_bucket: ${{ secrets.UPYUN_BUCKET }}
+          source_dir: upload
+          destination_dir: core/${{ steps.version.outputs.project }}/${{ steps.version.outputs.version }}/win
+          endpoint: https://s3.api.upyun.com

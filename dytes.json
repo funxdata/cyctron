@@ -1,0 +1,7 @@
+{
+  "name": "cyctron",
+  "version": "1.0.0",
+  "description": "system for communication",
+  "main": "index.js",
+  "type": "core"
+}

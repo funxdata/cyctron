@@ -1,0 +1,55 @@
+name: macOSOS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install cmake gcc jq pkg-config criterion
+          echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+
+      - name: Read version from JSON
+        id: version
+        run: |
+          set -e
+          echo "project=$(jq -r '.name' dytes.json)" >> $GITHUB_OUTPUT
+          echo "version=$(jq -r '.version' dytes.json)" >> $GITHUB_OUTPUT
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DBUILD_TESTS=OFF  # 临时关闭 tests 避免 criterion 链接失败
+
+      - name: Build
+        run: |
+          cd build
+          make -j$(sysctl -n hw.logicalcpu)
+
+      - name: Prepare upload directory
+        run: |
+          mkdir -p upload
+          cp build/cyctron upload/
+
+      - name: Upload to UpYun S3
+        uses: shallwefootball/s3-upload-action@master
+        with:
+          aws_key_id: ${{ secrets.UPYUN_API_KEY }}
+          aws_secret_access_key: ${{ secrets.UPYUN_API_SECRET }}
+          aws_bucket: ${{ secrets.UPYUN_BUCKET }}
+          source_dir: upload
+          destination_dir: core/${{ steps.version.outputs.project }}/${{ steps.version.outputs.version }}/mac
+          endpoint: https://s3.api.upyun.com

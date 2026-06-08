@@ -1,0 +1,13 @@
+[submodule "crates/log"]
+	path = crates/log
+	url = https://github.com/rxi/log.c
+[submodule "crates/mongoose"]
+	path = crates/mongoose
+	url = https://github.com/cesanta/mongoose.git
+[submodule "crates/criterion"]
+	path = crates/criterion
+	url = https://github.com/Snaipe/Criterion.git
+
+[submodule "crates/libffi"]
+	path = crates/libffi
+	url = https://github.com/libffi/libffi.git
