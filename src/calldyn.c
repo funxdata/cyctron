@@ -17,44 +17,29 @@
 
 #define PLUGIN_JSON_BUF_SIZE 65536
 
-// 统一插件函数签名
 typedef int (*plugin_fn_t)(const char* in, char* out);
 
-int call_local_dyn_libffi(const char *ffi_path,
-                          const char *func_name,
-                          const char *json_in,
-                          char **json_out)
+int call_local_dyn_libffi(const char *ffi_path, const char *func_name, const char *json_in, char **json_out)
 {
     if (!ffi_path || !func_name || !json_out) return -100;
-
     *json_out = NULL;
 
-    // =========================
-    // 1️ 加载动态库
-    // =========================
     DL_HANDLE handle = dlopen(ffi_path, RTLD_NOW
-#ifndef _WIN32
-                              | RTLD_LOCAL
-#endif
+    #ifndef _WIN32
+     | RTLD_LOCAL
+    #endif
     );
     if (!handle) {
         fprintf(stderr, "[ffi] load library failed: %s\n", dlerror());
         return -1;
     }
-
-    // =========================
-    // 2️ 获取函数指针
-    // =========================
     void *fn_ptr = dlsym(handle, func_name);
     if (!fn_ptr) {
         fprintf(stderr, "[ffi] dlsym failed: %s\n", dlerror());
         dlclose(handle);
         return -2;
     }
-
-    // =========================
-    // 3️ 准备输出 buffer
-    // =========================
+    
     char *buf = (char*)malloc(PLUGIN_JSON_BUF_SIZE);
     if (!buf) {
         fprintf(stderr, "[ffi] malloc failed\n");
@@ -63,34 +48,30 @@ int call_local_dyn_libffi(const char *ffi_path,
     }
     memset(buf, 0, PLUGIN_JSON_BUF_SIZE);
 
-    // =========================
-    // 4 libffi 调用
-    // =========================
     ffi_cif cif;
     ffi_type *args[2];
     void *values[2];
     int rc = 0;
 
-    args[0] = &ffi_type_pointer;   // const char*
-    args[1] = &ffi_type_pointer;   // char* (输出)
+    const char *in = json_in;
+    char *out = buf;
 
-    values[0] = (void*)&json_in;
-    values[1] = &buf;
+    args[0] = &ffi_type_pointer;
+    args[1] = &ffi_type_pointer;
 
-    if (ffi_prep_cif(&cif, FFI_DEFAULT_ABI, 2, &ffi_type_sint, args) != FFI_OK) {
-        fprintf(stderr, "[ffi] cif prep failed\n");
-        free(buf);
-        dlclose(handle);
-        return -4;
+    values[0] = &in;
+    values[1] = &out;
+
+    if (ffi_prep_cif(&cif, FFI_DEFAULT_ABI, 2, &ffi_type_sint, args) == FFI_OK)
+    {
+        ffi_call(&cif, fn_ptr, &rc, values);
     }
-
-    ffi_call(&cif, fn_ptr, &rc, values);
-
+    else
+    {
+        rc = -999;
+    }
+    
     *json_out = buf;
-
-    // =========================
-    // 5️⃣ 卸载动态库
-    // =========================
     dlclose(handle);
 
     return rc;
