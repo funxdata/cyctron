@@ -5,7 +5,6 @@
 #include "server.h"
 
 void ws_accept_manual(struct mg_connection *c, struct mg_http_message *hm) {
-    // 标记为 WebSocket
     c->is_websocket = 1;
     c->fn = ws_ev_handler;
 

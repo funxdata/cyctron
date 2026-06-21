@@ -7,8 +7,7 @@
 #include "server.h"
 #include "uri.h"
 #include "log.h"
-
-#define WEB_ROOT "./web"
+#include "global.h"
 
 void ev_handler_static(struct mg_connection *c, int ev, void *ev_data) {
     struct mg_http_message *hm = (struct mg_http_message *) ev_data;
