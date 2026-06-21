@@ -52,7 +52,7 @@ struct InputData {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn add(json_in: *const c_char, json_out: *mut c_char) -> c_int {
+pub extern "C" fn post_add(json_in: *const c_char, json_out: *mut c_char) -> c_int {
     if json_in.is_null() {
         return write_error(json_out, 400100, "json_in is null");
     }
@@ -74,7 +74,7 @@ pub extern "C" fn add(json_in: *const c_char, json_out: *mut c_char) -> c_int {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn del(json_in: *const c_char, json_out: *mut c_char) -> c_int {
+pub extern "C" fn post_del(json_in: *const c_char, json_out: *mut c_char) -> c_int {
     if json_in.is_null() {
         return write_error(json_out, 400100, "json_in is null");
     }
