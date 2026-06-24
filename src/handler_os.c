@@ -56,12 +56,14 @@ void ev_handler_os(struct mg_connection *c, int ev, void *ev_data) {
     free(json_in);
     if (rc != 0 || !json_out) {
         mg_http_reply(c, 404,
+             "Access-Control-Allow-Origin: *\r\n"
             "Content-Type: application/json\r\n",
             "{\"error\":404,\"message\":\"Plugin Not Found\"}");
         return;
     }
 
     mg_http_reply(c, 200,
+        "Access-Control-Allow-Origin: *\r\n"
         "Content-Type: application/json\r\n",
         "%s", json_out);
 
