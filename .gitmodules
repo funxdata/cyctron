@@ -10,3 +10,6 @@
 [submodule "crates/libffi"]
 	path = crates/libffi
 	url = git@github.com:libffi/libffi.git
+[submodule "crates/zlog"]
+	path = crates/zlog
+	url = git@github.com:HardySimpson/zlog.git
