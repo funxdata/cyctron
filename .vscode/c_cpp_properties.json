@@ -5,7 +5,7 @@
             "includePath": [
                 "${workspaceFolder}/crates/mongoose",
                 "${workspaceFolder}/crates/log/src",
-                "${workspaceFolder}/crates/dyncall/dyncall",
+                "${workspaceFolder}/crates/libffi",
                 "${workspaceFolder}/include"
             ],
             "defines": [],
