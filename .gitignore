@@ -39,3 +39,4 @@ os
 libary 
 chat
 /**/*.swp
+/core*
