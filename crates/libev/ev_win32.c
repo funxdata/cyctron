@@ -39,11 +39,22 @@
 
 #ifdef _WIN32
 
-/* note: the comment below could not be substantiated, but what would I care */
-/* MSDN says this is required to handle SIGFPE */
-/* my wild guess would be that using something floating-pointy is required */
-/* for the crt to do something about it */
-volatile double SIGFPE_REQ = 0.0f;
+// 添加 Windows 必要的头文件
+#define _WIN32_WINNT 0x0600
+#include <winsock2.h>
+#include <windows.h>
+#include <ws2tcpip.h>
+
+#include "ev.h"
+
+// 避免重复定义 ev_time 和 SIGFPE_REQ
+#define EV_HAVE_EV_TIME 1  // 告诉编译器 ev_time 在别处定义
+
+// 定义 EV_TS_FROM_USEC 宏（如果 ev.c 中没有定义）
+#ifndef EV_TS_FROM_USEC
+#define EV_TS_FROM_USEC(us) ((ev_tstamp)(us) * 1e-6)
+#endif
+
 
 static SOCKET
 ev_tcp_socket (void)
@@ -143,6 +154,7 @@ fail:
 #undef pipe
 #define pipe(filedes) ev_pipe (filedes)
 
+// Windows 平台的 ev_time 实现 - 无条件提供
 #define EV_HAVE_EV_TIME 1
 ev_tstamp
 ev_time (void)
@@ -154,9 +166,8 @@ ev_time (void)
   ui.u.LowPart  = ft.dwLowDateTime;
   ui.u.HighPart = ft.dwHighDateTime;
 
-  /* also, msvc cannot convert ulonglong to double... yes, it is that sucky */
   return EV_TS_FROM_USEC (((LONGLONG)(ui.QuadPart - 116444736000000000) * 1e-1));
 }
 
-#endif
+#endif /* _WIN32 */
 
