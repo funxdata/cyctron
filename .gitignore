@@ -40,3 +40,8 @@ libary
 chat
 /**/*.swp
 /core*
+crates/criterion*
+crates/libffi*
+crates/mongoose*
+crates/nng*
+
