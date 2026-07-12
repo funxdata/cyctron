@@ -1,362 +1,363 @@
 #include "realtime.h"
+#include "event_pusher.h"
+#include "calldyn.h"
+#include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <stdarg.h>
+#include <nng/nng.h>
+#include <nng/protocol/pubsub0/pub.h>
 
-#ifdef _WIN32
-    #include <windows.h>
-    #include <winsock2.h>
-    #pragma comment(lib, "ws2_32.lib")
-#else
-    #include <unistd.h>
-#endif
+// ============ 调度中心状态 ============
+
+typedef struct rt_task_node {
+    rt_task_t task;
+    struct rt_task_node *next;
+    nng_socket nng_sock;
+    int nng_initialized;
+    time_t created_at;
+    time_t last_heartbeat;
+    int restart_count;
+} rt_task_node_t;
+
+static struct {
+    rt_task_node_t *tasks;
+    int count;
+    int running;
+    pthread_mutex_t mutex;
+    int max_restarts;
+    int heartbeat_timeout;
+} g_scheduler = {
+    .tasks = NULL,
+    .count = 0,
+    .running = 0,
+    .mutex = PTHREAD_MUTEX_INITIALIZER,
+    .max_restarts = 3,
+    .heartbeat_timeout = 30
+};
+
+static uint64_t g_counter = 0;
 
 // ============ 内部函数 ============
 
-static int task_counter = 0;
-
-// 生成唯一任务ID
-static void generate_task_id(char *id, size_t size) {
-    static uint64_t counter = 0;
-    
-    uint64_t val;
-#ifdef _WIN32
-    // Windows 下使用 InterlockedIncrement
-    val = (uint64_t)InterlockedIncrement((long*)&counter);
-#else
-    // Linux 下使用 GCC 原子操作
-    val = __sync_fetch_and_add(&counter, 1);
-#endif
-    
-    snprintf(id, size, "task_%lu_%lu", 
-             (unsigned long)time(NULL), 
-             (unsigned long)val);
+static void gen_id(char *id, size_t size) {
+    uint64_t n = __sync_fetch_and_add(&g_counter, 1);
+    snprintf(id, size, "task_%lu_%lu", (unsigned long)time(NULL), (unsigned long)n);
 }
 
-// ============ libev 回调函数 ============
-
-// 定时器回调
-static void timer_callback(struct ev_loop *loop, ev_timer *w, int revents) {
-    rt_task_t *task = (rt_task_t *)w->data;
-    if (!task || task->status != RT_TASK_RUNNING) return;
-    
-    if (task->on_tick) {
-        task->on_tick(task);
+static rt_task_node_t* find_node(const char *uuid) {
+    rt_task_node_t *n = g_scheduler.tasks;
+    while (n) {
+        if (strcmp(n->task.uuid, uuid) == 0) return n;
+        n = n->next;
     }
+    return NULL;
 }
 
-// IO回调
-static void io_callback(struct ev_loop *loop, ev_io *w, int revents) {
-    rt_task_t *task = (rt_task_t *)w->data;
-    if (!task || task->status != RT_TASK_RUNNING) return;
-    
-    if (task->on_data) {
-        task->on_data(task, NULL, 0);
-    }
+static void send_rt_event(const char *action, const char *uuid, const char *status) {
+    char msg[256];
+    snprintf(msg, sizeof(msg), 
+             "{\"action\":\"%s\",\"uuid\":\"%s\",\"status\":\"%s\"}",
+             action, uuid ? uuid : "", status ? status : "");
+    event_push_with_type("realtime", msg);
 }
 
-// 异步回调
-static void async_callback(struct ev_loop *loop, ev_async *w, int revents) {
-    rt_task_t *task = (rt_task_t *)w->data;
-    if (!task) return;
-    
-    if (task->on_data) {
-        task->on_data(task, NULL, 0);
-    }
-}
+// ============ 调度 API ============
 
-// ============ API 实现 ============
-
-// 初始化管理器
 rt_manager_t* rt_init(void) {
-#ifdef _WIN32
-    WSADATA wsaData;
-    static int wsa_initialized = 0;
-    if (!wsa_initialized) {
-        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-            printf("[RT] WSAStartup failed\n");
-            return NULL;
-        }
-        wsa_initialized = 1;
-        printf("[RT] WSAStartup successful\n");
+    pthread_mutex_lock(&g_scheduler.mutex);
+    if (!g_scheduler.running) {
+        g_scheduler.running = 1;
+        g_scheduler.count = 0;
+        g_scheduler.tasks = NULL;
+        log_info("[Scheduler] Init");
     }
-#endif
-
-    rt_manager_t *mgr = (rt_manager_t *)calloc(1, sizeof(rt_manager_t));
-    if (!mgr) {
-        printf("[RT] Failed to allocate manager\n");
-        return NULL;
-    }
-    
-    // 使用 ev_loop_new 代替 ev_default_loop
-    mgr->loop = ev_loop_new(EVFLAG_AUTO);
-    if (!mgr->loop) {
-        printf("[RT] Failed to create event loop\n");
-        free(mgr);
-        return NULL;
-    }
-    
-    mgr->tasks = NULL;
-    mgr->task_count = 0;
-    mgr->running = 1;
-    mgr->on_task_complete = NULL;
-    
-    printf("[RT] Init (libev loop created)\n");
-    return mgr;
+    pthread_mutex_unlock(&g_scheduler.mutex);
+    return (rt_manager_t*)&g_scheduler;
 }
 
-// 创建任务
-rt_task_t* rt_create_task(rt_manager_t *mgr, 
-                          const char *socket_id,
-                          rt_task_type_t type) {
-    if (!mgr) {
-        printf("[RT] Manager is NULL\n");
+rt_task_t* rt_create_task(rt_manager_t *mgr, const char *uuid, const char *socket_path) {
+    (void)mgr;
+    (void)socket_path;  // 不再使用传入的路径
+    if (!uuid) return NULL;
+    
+    pthread_mutex_lock(&g_scheduler.mutex);
+    
+    if (find_node(uuid)) {
+        pthread_mutex_unlock(&g_scheduler.mutex);
+        log_warn("[Scheduler] Task %s exists", uuid);
         return NULL;
     }
     
-    rt_task_t *task = (rt_task_t *)calloc(1, sizeof(rt_task_t));
-    if (!task) {
-        printf("[RT] Failed to allocate task\n");
+    rt_task_node_t *node = calloc(1, sizeof(rt_task_node_t));
+    if (!node) {
+        pthread_mutex_unlock(&g_scheduler.mutex);
         return NULL;
     }
     
-    // 生成任务ID
-    generate_task_id(task->task_id, sizeof(task->task_id));
+    memset(&node->nng_sock, 0, sizeof(nng_socket));
+    node->nng_initialized = 0;
+    node->created_at = time(NULL);
+    node->last_heartbeat = time(NULL);
+    node->restart_count = 0;
     
-    // 复制socket ID
-    if (socket_id) {
-        strncpy(task->socket_id, socket_id, sizeof(task->socket_id) - 1);
-    } else {
-        strcpy(task->socket_id, "unknown");
-    }
+    gen_id(node->task.task_id, sizeof(node->task.task_id));
+    strncpy(node->task.uuid, uuid, sizeof(node->task.uuid) - 1);
+    node->task.uuid[sizeof(node->task.uuid) - 1] = '\0';
     
-    task->type = type;
-    task->status = RT_TASK_IDLE;
-    task->user_data = NULL;
-    task->manager = mgr;
-    task->next = NULL;
-    task->on_tick = NULL;
-    task->on_data = NULL;
-    task->on_cleanup = NULL;
+    // 直接生成 socket 路径: /tmp/cyctron_<uuid>.sock
+    snprintf(node->task.socket_id, sizeof(node->task.socket_id), "/tmp/cyctron_%s.sock", uuid);
+    node->task.socket_id[sizeof(node->task.socket_id) - 1] = '\0';
     
-    // 初始化 libev watchers
-    ev_timer_init(&task->timer, timer_callback, 0.0, 0.0);
-    task->timer.data = task;
+    node->task.status = RT_TASK_IDLE;
+    node->task.manager = mgr;
+    node->task.user_data = NULL;
+    node->task.on_tick = NULL;
+    node->task.on_data = NULL;
+    node->task.on_cleanup = NULL;
     
-    ev_io_init(&task->io_watcher, io_callback, 0, EV_READ);
-    task->io_watcher.data = task;
+    node->next = g_scheduler.tasks;
+    g_scheduler.tasks = node;
+    g_scheduler.count++;
     
-    ev_async_init(&task->async_watcher, async_callback);
-    task->async_watcher.data = task;
+    log_info("[Scheduler] Created: %s (uuid: %s, socket: %s)", 
+             node->task.task_id, uuid, node->task.socket_id);
+    send_rt_event("create", uuid, "created");
     
-    // 添加到任务链表
-    task->next = mgr->tasks;
-    mgr->tasks = task;
-    mgr->task_count++;
-    
-    printf("[RT] Created task: %s (socket: %s, type: %d)\n", 
-           task->task_id, task->socket_id, type);
-    
-    return task;
+    pthread_mutex_unlock(&g_scheduler.mutex);
+    return &node->task;
 }
 
-// 启动任务
-int rt_start_task(rt_task_t *task) {
-    if (!task) {
-        printf("[RT] Task is NULL\n");
-        return -1;
-    }
-    
+int rt_start_task(rt_task_t *task, const char *lib_name) {
+    if (!task) return -1;
     if (task->status == RT_TASK_RUNNING) {
-        printf("[RT] Task %s already running\n", task->task_id);
+        log_warn("[Scheduler] Task %s already running", task->uuid);
         return 0;
     }
     
-    task->status = RT_TASK_RUNNING;
+    rt_task_node_t *node = (rt_task_node_t*)task;
+    char socket_url[256];
     
-    // 启动定时器（每100ms执行一次）
-    ev_timer_set(&task->timer, 0.1, 0.1);
-    ev_timer_start(task->manager->loop, &task->timer);
+    // 创建 NNG 监听
+    if (!node->nng_initialized) {
+        int rv = nng_pub0_open(&node->nng_sock);
+        if (rv != 0) {
+            log_error("[Scheduler] nng_pub0_open failed: %s", nng_strerror(rv));
+            return -1;
+        }
+        
+        snprintf(socket_url, sizeof(socket_url), "ipc://%s", task->socket_id);
+        
+        rv = nng_listen(node->nng_sock, socket_url, NULL, 0);
+        if (rv != 0) {
+            log_error("[Scheduler] nng_listen %s failed: %s", socket_url, nng_strerror(rv));
+            nng_close(node->nng_sock);
+            return -1;
+        }
+        
+        node->nng_initialized = 1;
+        log_info("[Scheduler] NNG listening on %s", socket_url);
+    }
     
-    // 启动异步监听
-    ev_async_start(task->manager->loop, &task->async_watcher);
+    // 构建调用参数
+    char json_in[512];
+    const char *lib = lib_name ? lib_name : "libsoket_demo";
     
-    printf("[RT] Started task: %s\n", task->task_id);
-    return 0;
+    snprintf(socket_url, sizeof(socket_url), "ipc://%s", task->socket_id);
+    
+    snprintf(json_in, sizeof(json_in), 
+             "{\"config\":{\"uuid\":\"%s\",\"nng_url\":\"%s\"}}",
+             task->uuid, socket_url);
+    
+    log_info("[Scheduler] Starting %s with %s", task->uuid, lib);
+    
+    char *json_out = NULL;
+    int ret = call_local_dyn_socklibffi(lib, json_in, &json_out);
+    
+    if (ret == 0) {
+        task->status = RT_TASK_RUNNING;
+        node->last_heartbeat = time(NULL);
+        log_info("[Scheduler] Started: %s", task->uuid);
+        if (json_out) {
+            log_info("[Scheduler] Output: %s", json_out);
+            free(json_out);
+        }
+        send_rt_event("bind", task->uuid, "running");
+        return 0;
+    }
+    
+    log_error("[Scheduler] Start %s failed: %d", task->uuid, ret);
+    if (json_out) free(json_out);
+    task->status = RT_TASK_ERROR;
+    return -1;
 }
 
-// 停止任务
-int rt_stop_task(rt_task_t *task) {
+int rt_remove_task(rt_task_t *task) {
     if (!task) return -1;
     
-    if (task->status == RT_TASK_STOPPED) {
-        printf("[RT] Task %s already stopped\n", task->task_id);
-        return 0;
+    rt_task_node_t *node = (rt_task_node_t*)task;
+    
+    pthread_mutex_lock(&g_scheduler.mutex);
+    rt_task_node_t *prev = NULL, *cur = g_scheduler.tasks;
+    while (cur) {
+        if (cur == node) {
+            if (prev) prev->next = cur->next;
+            else g_scheduler.tasks = cur->next;
+            g_scheduler.count--;
+            break;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+    pthread_mutex_unlock(&g_scheduler.mutex);
+    
+    if (!cur) return -1;
+    
+    if (node->nng_initialized) {
+        nng_close(node->nng_sock);
+        node->nng_initialized = 0;
     }
     
     task->status = RT_TASK_STOPPED;
+    log_info("[Scheduler] Removed: %s", task->uuid);
+    send_rt_event("remove", task->uuid, "stopped");
     
-    // 停止所有 watchers
-    ev_timer_stop(task->manager->loop, &task->timer);
-    ev_io_stop(task->manager->loop, &task->io_watcher);
-    ev_async_stop(task->manager->loop, &task->async_watcher);
+    if (task->on_cleanup) task->on_cleanup(task);
+    if (task->user_data) { free(task->user_data); task->user_data = NULL; }
+    free(node);
     
-    printf("[RT] Stopped task: %s\n", task->task_id);
     return 0;
 }
 
-// 暂停任务
-int rt_pause_task(rt_task_t *task) {
+int rt_stop_task(rt_task_t *task) {
     if (!task) return -1;
-    
-    if (task->status != RT_TASK_RUNNING) {
-        printf("[RT] Task %s not running\n", task->task_id);
-        return -1;
-    }
-    
-    task->status = RT_TASK_PAUSED;
-    ev_timer_stop(task->manager->loop, &task->timer);
-    
-    printf("[RT] Paused task: %s\n", task->task_id);
+    if (task->status == RT_TASK_STOPPED) return 0;
+    task->status = RT_TASK_STOPPED;
+    log_info("[Scheduler] Stopped: %s", task->uuid);
+    send_rt_event("stop", task->uuid, "stopped");
     return 0;
 }
 
-// 恢复任务
-int rt_resume_task(rt_task_t *task) {
-    if (!task) return -1;
-    
-    if (task->status != RT_TASK_PAUSED) {
-        printf("[RT] Task %s not paused\n", task->task_id);
-        return -1;
-    }
-    
-    task->status = RT_TASK_RUNNING;
-    ev_timer_start(task->manager->loop, &task->timer);
-    
-    printf("[RT] Resumed task: %s\n", task->task_id);
-    return 0;
+rt_task_t* rt_find_task_by_uuid(rt_manager_t *mgr, const char *uuid) {
+    (void)mgr;
+    rt_task_node_t *n = find_node(uuid);
+    return n ? &n->task : NULL;
 }
 
-// 发送数据到任务
-int rt_send_data(rt_task_t *task, void *data, size_t len) {
+int rt_send_msg(rt_task_t *task, const char *data) {
     if (!task || !data) return -1;
+    if (task->status != RT_TASK_RUNNING) return -2;
     
-    if (task->status != RT_TASK_RUNNING) {
-        printf("[RT] Task %s not running, cannot send data\n", task->task_id);
-        return -1;
-    }
-    
-    // 使用异步通知机制发送数据
-    ev_async_send(task->manager->loop, &task->async_watcher);
-    
-    printf("[RT] Data sent to task: %s\n", task->task_id);
+    char msg[512];
+    snprintf(msg, sizeof(msg), "{\"target\":\"%s\",\"data\":\"%s\"}", task->uuid, data);
+    event_push_with_type("msg", msg);
+    log_info("[Scheduler] Msg sent to %s", task->uuid);
     return 0;
 }
 
-// 设置定时回调
-void rt_task_set_tick(rt_task_t *task, void (*callback)(rt_task_t*)) {
-    if (task) {
-        task->on_tick = callback;
-        printf("[RT] Tick callback set for task: %s\n", task->task_id);
+void rt_broadcast(rt_manager_t *mgr, const char *data, size_t len) {
+    (void)mgr;
+    if (!data) return;
+    
+    pthread_mutex_lock(&g_scheduler.mutex);
+    rt_task_node_t *n = g_scheduler.tasks;
+    while (n) {
+        if (n->task.status == RT_TASK_RUNNING) {
+            char msg[512];
+            snprintf(msg, sizeof(msg), "{\"target\":\"%s\",\"data\":%.*s}", 
+                     n->task.uuid, (int)len, data);
+            event_push_with_type("broadcast", msg);
+        }
+        n = n->next;
     }
+    pthread_mutex_unlock(&g_scheduler.mutex);
+    log_info("[Scheduler] Broadcasted");
 }
 
-// 设置数据回调
-void rt_task_set_data(rt_task_t *task, void (*callback)(rt_task_t*, void*, size_t)) {
-    if (task) {
-        task->on_data = callback;
-        printf("[RT] Data callback set for task: %s\n", task->task_id);
-    }
-}
-
-// 设置清理回调
-void rt_task_set_cleanup(rt_task_t *task, void (*callback)(rt_task_t*)) {
-    if (task) {
-        task->on_cleanup = callback;
-        printf("[RT] Cleanup callback set for task: %s\n", task->task_id);
-    }
-}
-
-// 获取任务状态
 rt_task_status_t rt_get_task_status(const rt_task_t *task) {
     return task ? task->status : RT_TASK_ERROR;
 }
 
-// 运行事件循环
+int rt_get_task_count(rt_manager_t *mgr) {
+    (void)mgr;
+    return g_scheduler.count;
+}
+
 void rt_run(rt_manager_t *mgr) {
-    if (!mgr || !mgr->running) return;
+    (void)mgr;
+    time_t now = time(NULL);
     
-    // 运行 libev 事件循环（每次运行 100ms）
-    ev_run(mgr->loop, EVRUN_ONCE);
-}
-
-// 停止事件循环
-void rt_stop(rt_manager_t *mgr) {
-    if (mgr) {
-        mgr->running = 0;
-        printf("[RT] Stopping manager\n");
-    }
-}
-
-// 销毁任务（内部使用）
-static void rt_destroy_task(rt_task_t *task) {
-    if (!task) return;
-    
-    // 停止任务
-    rt_stop_task(task);
-    
-    // 执行清理回调
-    if (task->on_cleanup) {
-        task->on_cleanup(task);
-    }
-    
-    // 清理用户数据
-    if (task->user_data) {
-        free(task->user_data);
-        task->user_data = NULL;
-    }
-    
-    free(task);
-    printf("[RT] Task destroyed\n");
-}
-
-// 清理所有任务
-void rt_cleanup(rt_manager_t *mgr) {
-    if (!mgr) return;
-    
-    rt_task_t *task = mgr->tasks;
-    while (task) {
-        rt_task_t *next = task->next;
-        rt_destroy_task(task);
-        task = next;
-    }
-    
-    mgr->tasks = NULL;
-    mgr->task_count = 0;
-    mgr->running = 0;
-    
-    // 销毁事件循环
-    if (mgr->loop) {
-        ev_loop_destroy(mgr->loop);
-        mgr->loop = NULL;
-    }
-    
-    free(mgr);
-    printf("[RT] Cleanup complete\n");
-}
-
-// 广播消息到所有任务
-void rt_broadcast(rt_manager_t *mgr, const char *data, size_t len) {
-    if (!mgr || !data) return;
-    
-    rt_task_t *task = mgr->tasks;
-    while (task) {
-        if (task->status == RT_TASK_RUNNING) {
-            rt_send_data(task, (void *)data, len);
+    pthread_mutex_lock(&g_scheduler.mutex);
+    rt_task_node_t *n = g_scheduler.tasks;
+    while (n) {
+        if (n->task.status == RT_TASK_RUNNING) {
+            if (now - n->last_heartbeat > g_scheduler.heartbeat_timeout) {
+                log_warn("[Scheduler] Task %s heartbeat timeout!", n->task.uuid);
+                send_rt_event("heartbeat_timeout", n->task.uuid, "timeout");
+            }
         }
-        task = task->next;
+        n = n->next;
     }
-    
-    printf("[RT] Broadcasted to all tasks\n");
+    pthread_mutex_unlock(&g_scheduler.mutex);
+    usleep(100000);
 }
+
+void rt_stop(rt_manager_t *mgr) { 
+    (void)mgr; 
+    g_scheduler.running = 0; 
+    log_info("[Scheduler] Stopped");
+}
+
+void rt_cleanup(rt_manager_t *mgr) {
+    (void)mgr;
+    pthread_mutex_lock(&g_scheduler.mutex);
+    rt_task_node_t *n = g_scheduler.tasks;
+    while (n) {
+        rt_task_node_t *next = n->next;
+        if (n->task.status == RT_TASK_RUNNING) {
+            send_rt_event("cleanup", n->task.uuid, "stopped");
+        }
+        if (n->nng_initialized) {
+            nng_close(n->nng_sock);
+        }
+        if (n->task.on_cleanup) n->task.on_cleanup(&n->task);
+        if (n->task.user_data) free(n->task.user_data);
+        free(n);
+        n = next;
+    }
+    g_scheduler.tasks = NULL;
+    g_scheduler.count = 0;
+    g_scheduler.running = 0;
+    pthread_mutex_unlock(&g_scheduler.mutex);
+    log_info("[Scheduler] Cleanup done");
+}
+
+void rt_task_set_tick(rt_task_t *task, void (*cb)(rt_task_t*)) {
+    if (task) task->on_tick = cb;
+}
+void rt_task_set_data(rt_task_t *task, void (*cb)(rt_task_t*, void*, size_t)) {
+    if (task) task->on_data = cb;
+}
+void rt_task_set_cleanup(rt_task_t *task, void (*cb)(rt_task_t*)) {
+    if (task) task->on_cleanup = cb;
+}
+
+void rt_dump_tasks(rt_manager_t *mgr) {
+    (void)mgr;
+    pthread_mutex_lock(&g_scheduler.mutex);
+    log_info("[Scheduler] %d tasks", g_scheduler.count);
+    rt_task_node_t *n = g_scheduler.tasks;
+    int idx = 0;
+    while (n) {
+        log_info("[Scheduler] [%d] %s | %s | %d", 
+                 idx++, n->task.task_id, n->task.uuid, n->task.status);
+        n = n->next;
+    }
+    pthread_mutex_unlock(&g_scheduler.mutex);
+}
+

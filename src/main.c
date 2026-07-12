@@ -4,6 +4,7 @@
 #include "log.h"
 #include "mongoose.h"
 #include "server.h"
+#include "event_pusher.h"
 
 static void print_help(const char *prog) {
     printf("Usage:\n");
@@ -36,13 +37,17 @@ int main(int argc, char *argv[]) {
         }
 
         char addr[128];
-        // printf(".....................");
         snprintf(addr, sizeof(addr), "http://%s:%s", host, port);
+
+        // 初始化事件推送
+        if (!event_pusher_init()) {
+            log_info("Failed to initialize event pusher\n");
+            return 1;
+        }
 
         struct mg_mgr mgr;
         mg_mgr_init(&mgr);
 
-        // 只监听一个端口
         if (mg_http_listen(&mgr, addr, ev_handler, NULL) == NULL) {
             log_info("Error starting HTTP+WS server on %s\n", addr);
             return 1;
@@ -51,7 +56,7 @@ int main(int argc, char *argv[]) {
         log_info("HTTP + WS server started on %s\n", addr);
 
         while (1) {
-            mg_mgr_poll(&mgr, 50); // 50ms 保证 WS 心跳及时
+            mg_mgr_poll(&mgr, 50);
         }
     } 
     else if (strcmp(argv[1], "stop") == 0) {
@@ -68,3 +73,4 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
+
