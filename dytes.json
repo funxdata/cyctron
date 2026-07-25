@@ -1,7 +1,12 @@
 {
   "name": "cyctron",
-  "version": "1.0.0",
-  "description": "system for communication",
-  "main": "index.js",
-  "type": "core"
+  "version": "1.0.1",
+  "description": "local http server",
+  "keywords": ["cyctron", "local"],
+  "author": "funxdata",
+  "type": "core",
+  "license": "MIT",
+  "exports": {
+    "./build/release/cyctron.exe": "cyctron.exe"
+  }
 }
