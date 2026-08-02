@@ -1,133 +1,215 @@
-use serde_json::{Value, json};
-use std::sync::Mutex;
+// src/core/runtime.rs
+//! 运行时核心模块
 
-#[derive(Debug, Clone)]
-pub struct RuntimeState {
-    pub data: Value,
-    pub status: String,
-    pub count: u64,
-    pub last_update: u64,
+use crate::core::app::process_data;
+use crate::utils::sock::NngReceiver;
+use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::time::Duration;
+
+// ============================================
+//  全局状态
+// ============================================
+
+struct RuntimeState {
+    running: AtomicBool,
+    paused: AtomicBool,
+    receiver: Mutex<NngReceiver>,
+    task_uuid: Mutex<String>,
 }
 
-impl Default for RuntimeState {
-    fn default() -> Self {
+impl RuntimeState {
+    fn new() -> Self {
         Self {
-            data: json!({}),
-            status: "idle".to_string(),
-            count: 0,
-            last_update: 0,
+            running: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
+            receiver: Mutex::new(NngReceiver::new()),
+            task_uuid: Mutex::new(String::new()),
         }
+    }
+
+    fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
+
+    fn set_running(&self, val: bool) {
+        self.running.store(val, Ordering::SeqCst);
+    }
+
+    fn set_paused(&self, val: bool) {
+        self.paused.store(val, Ordering::SeqCst);
+    }
+
+    fn receiver(&self) -> &Mutex<NngReceiver> {
+        &self.receiver
+    }
+
+    fn set_uuid(&self, uuid: String) {
+        let mut guard = self.task_uuid.lock().unwrap();
+        *guard = uuid;
+    }
+
+    fn get_uuid(&self) -> String {
+        self.task_uuid.lock().unwrap().clone()
     }
 }
 
-lazy_static::lazy_static! {
-    static ref STATE: Mutex<RuntimeState> = Mutex::new(RuntimeState::default());
+// 全局单例
+fn state() -> &'static RuntimeState {
+    static STATE: OnceLock<RuntimeState> = OnceLock::new();
+    STATE.get_or_init(RuntimeState::new)
 }
 
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
+// ============================================
+//  公开 API
+// ============================================
 
-/// 空函数，用于占位
-pub fn do_runtime_app() -> &'static str {
-    "runtime is running"
-}
-
-/// 初始化
 pub fn init_runtime(config: Option<Value>) -> Result<String, String> {
-    let mut state = STATE.lock().unwrap();
-    state.status = "running".to_string();
-    state.count = 0;
-    state.last_update = now();
-    if let Some(cfg) = config {
-        state.data = cfg;
-    }
-    Ok("Runtime initialized".to_string())
-}
+    let st = state();
+    let cfg = config.unwrap_or_default();
 
-/// 获取当前状态
-pub fn get_state() -> RuntimeState {
-    STATE.lock().unwrap().clone()
-}
+    let uuid = cfg
+        .get("uuid")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default")
+        .to_string();
+    st.set_uuid(uuid.clone());
 
-/// 获取实时数据
-pub fn get_realtime_data() -> Value {
-    let state = STATE.lock().unwrap();
-    json!({
-        "status": state.status,
-        "count": state.count,
-        "last_update": state.last_update,
-        "data": state.data,
-    })
-}
+    // 默认使用 /tmp/cyctron_<uuid>.sock
+    let default_path = format!("ipc:///tmp/cyctron_{}.sock", uuid);
+    let url = cfg
+        .get("nng_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&default_path);
 
-/// 更新数据
-pub fn update_data(data: Value) -> Result<(), String> {
-    let mut state = STATE.lock().unwrap();
-    state.data = data;
-    state.last_update = now();
-    state.count += 1;
-    Ok(())
-}
+    let mut receiver = st.receiver().lock().unwrap();
+    match receiver.start(url) {
+        Ok(_) => {
+            st.set_running(true);
+            st.set_paused(false);
 
-/// 合并数据
-pub fn merge_data(data: Value) -> Result<(), String> {
-    let mut state = STATE.lock().unwrap();
-    if let Some(obj) = state.data.as_object_mut() {
-        if let Some(new_obj) = data.as_object() {
-            for (k, v) in new_obj {
-                obj.insert(k.clone(), v.clone());
-            }
+            let uuid_clone = uuid.clone();
+            thread::spawn(move || {
+                message_loop(uuid_clone);
+            });
+
+            Ok(format!("Runtime initialized (uuid: {})", uuid))
         }
+        Err(e) => Err(format!("Failed to start NNG: {}", e)),
     }
-    state.last_update = now();
-    state.count += 1;
-    Ok(())
 }
 
-/// 暂停
-pub fn pause_runtime() -> Result<(), String> {
-    let mut state = STATE.lock().unwrap();
-    state.status = "paused".to_string();
-    Ok(())
-}
-
-/// 恢复
-pub fn resume_runtime() -> Result<(), String> {
-    let mut state = STATE.lock().unwrap();
-    state.status = "running".to_string();
-    Ok(())
-}
-
-/// 关闭
 pub fn close_runtime() -> Result<String, String> {
-    let mut state = STATE.lock().unwrap();
-    state.status = "stopped".to_string();
-    state.data = json!({});
+    let st = state();
+    st.set_running(false);
+    st.set_paused(false);
+
+    let mut receiver = st.receiver().lock().unwrap();
+    receiver.stop();
     Ok("Runtime closed".to_string())
 }
 
-/// 处理数据
-pub fn process_data(input: Value) -> Result<Value, String> {
-    let mut state = STATE.lock().unwrap();
-    state.count += 1;
-    state.last_update = now();
-    
-    if let Some(obj) = state.data.as_object_mut() {
-        if let Some(input_obj) = input.as_object() {
-            for (k, v) in input_obj {
-                obj.insert(k.clone(), v.clone());
-            }
+pub fn pause_runtime() -> Result<(), String> {
+    let st = state();
+    if !st.is_running() {
+        return Err("Runtime not running".to_string());
+    }
+    st.set_paused(true);
+    Ok(())
+}
+
+pub fn resume_runtime() -> Result<(), String> {
+    let st = state();
+    if !st.is_running() {
+        return Err("Runtime not running".to_string());
+    }
+    st.set_paused(false);
+    Ok(())
+}
+
+pub fn get_status() -> Value {
+    let st = state();
+    json!({
+        "running": st.is_running(),
+        "paused": st.is_paused(),
+        "task_uuid": st.get_uuid(),
+    })
+}
+
+// ============================================
+//  消息处理循环
+// ============================================
+
+fn message_loop(uuid: String) {
+    println!("[RUNTIME] Message loop started (uuid: {})", uuid);
+    let st = state();
+
+    while st.is_running() {
+        if st.is_paused() {
+            thread::sleep(Duration::from_millis(100));
+            continue;
+        }
+
+        let receiver = st.receiver().lock().unwrap();
+        if let Some(msg) = receiver.try_recv(100) {
+            handle_message(msg, &uuid);
         }
     }
-    
-    Ok(json!({
-        "status": state.status,
-        "count": state.count,
-        "last_update": state.last_update,
-        "data": state.data,
-    }))
+
+    println!("[RUNTIME] Message loop stopped (uuid: {})", uuid);
 }
+
+fn handle_message(msg: String, task_uuid: &str) {
+    println!("[RUNTIME] Received: {}", msg);
+
+    let json = match serde_json::from_str::<Value>(&msg) {
+        Ok(v) => v,
+        Err(_) => {
+            let response = process_data(msg.as_bytes());
+            if let Ok(text) = String::from_utf8(response) {
+                println!("[RUNTIME] Response: {}", text);
+            }
+            return;
+        }
+    };
+
+    // 控制命令
+    if let Some(cmd) = json.get("cmd").and_then(|v| v.as_str()) {
+        match cmd {
+            "pause" => {
+                let _ = pause_runtime();
+                return;
+            }
+            "resume" => {
+                let _ = resume_runtime();
+                return;
+            }
+            "stop" | "close" => {
+                let _ = close_runtime();
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    let response = process_data(json.to_string().as_bytes());
+    if let Ok(text) = String::from_utf8(response) {
+        if let Ok(mut resp_json) = serde_json::from_str::<Value>(&text) {
+            if let Some(obj) = resp_json.as_object_mut() {
+                obj.insert("task_uuid".to_string(), json!(task_uuid));
+            }
+            if let Ok(with_uuid) = serde_json::to_string(&resp_json) {
+                println!("[RUNTIME] Response: {}", with_uuid);
+                return;
+            }
+        }
+        println!("[RUNTIME] Response: {}", text);
+    }
+}
+

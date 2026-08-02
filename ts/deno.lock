@@ -1,0 +1,17 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@funxdata/webdx@*": "0.1.1"
+  },
+  "jsr": {
+    "@funxdata/webdx@0.1.1": {
+      "integrity": "b627605275da3094b395396b3f82a1c3c8d72324a13fbbba769fd6122e75e86b"
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "jsr:@funxdata/webdx@0.1.2",
+      "jsr:@std/assert@1"
+    ]
+  }
+}
