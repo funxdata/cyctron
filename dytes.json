@@ -1,6 +1,6 @@
 {
   "name": "cyctron",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "local http server",
   "keywords": ["cyctron", "local"],
   "author": "funxdata",
