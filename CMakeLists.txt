@@ -14,9 +14,6 @@ set(CORE_SOURCES
     src/event_pusher.c
     src/handler_static.c
     src/handler_utils.c
-    src/handler_os.c
-    src/handler_database.c
-    src/handler_chat.c
     src/handler_libary.c
     src/handler_ws.c
     src/calldyn.c
