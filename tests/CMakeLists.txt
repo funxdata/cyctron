@@ -40,6 +40,26 @@ if(EXISTS "${LIBARY_PLUGIN}")
         ENVIRONMENT "STRESS_REPORT_DIR=${CMAKE_SOURCE_DIR}/test-results")
 endif()
 
+# ---------- SSE：插件存在时注册 ----------
+if(WIN32)
+    set(SSE_PLUGIN "${CMAKE_SOURCE_DIR}/libary/sse_demo.dll")
+else()
+    set(SSE_PLUGIN "${CMAKE_SOURCE_DIR}/libary/sse_demo.so")
+endif()
+
+add_executable(test_sse test_sse.c
+    ../src/handler_sse.c ../src/calldyn.c
+    ../crates/mongoose/mongoose.c ../crates/log/src/log.c)
+target_include_directories(test_sse PRIVATE
+    ../include ../crates/mongoose ../crates/log/src ${FFI_INCLUDE_DIRS})
+target_link_libraries(test_sse PRIVATE
+    ${FFI_LIBRARIES} ${CMAKE_DL_LIBS} ${PLATFORM_LIBS})
+
+if(EXISTS "${SSE_PLUGIN}")
+    add_test(NAME sse COMMAND test_sse WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(sse PROPERTIES TIMEOUT 60)
+endif()
+
 # ---------- NNG IPC 压力测试：两个平台都构建 ----------
 add_executable(test_nng_stress test_nng_stress.c)
 target_include_directories(test_nng_stress PRIVATE

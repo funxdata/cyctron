@@ -53,6 +53,7 @@ set(CORE_SOURCES
     src/handler_utils.c
     src/handler_libary.c
     src/handler_ws.c
+    src/handler_sse.c
     src/calldyn.c
     src/core/uri.c
     crates/mongoose/mongoose.c
