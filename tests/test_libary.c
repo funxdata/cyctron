@@ -6,7 +6,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#define PLUGIN "./libary/libary_demo.dll"
+#define MISSING_PLUGIN "./libary/nope.dll"
+#else
 #define PLUGIN "./libary/libary_demo.so"
+#define MISSING_PLUGIN "./libary/nope.so"
+#endif
 
 static int passed = 0, failed = 0;
 
@@ -158,7 +164,7 @@ static void test_edges(void) {
     check(rc == -2 && out == NULL, "unknown symbol -> -2", "");
     free(out);
 
-    rc = call_local_dyn_libffi("./libary/nope.so", "get_handle", "{}", &out);
+    rc = call_local_dyn_libffi(MISSING_PLUGIN, "get_handle", "{}", &out);
     check(rc == -1, "missing plugin -> -1", "");
     free(out);
 }

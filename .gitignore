@@ -36,12 +36,15 @@ cyctron
 static
 web
 os
-libary 
+libary/
 chat
 /**/*.swp
 /core*
+build*/
+cyctron.exe
+publish*.exe
 crates/criterion*
-crates/libffi*
+crates/libffi
 crates/mongoose*
 crates/nng*
 

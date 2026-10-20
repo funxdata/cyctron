@@ -7,7 +7,11 @@
 #include <string.h>
 #include <time.h>
 
+#ifdef _WIN32
+#define PLUGIN "./libary/libary_demo.dll"
+#else
 #define PLUGIN "./libary/libary_demo.so"
+#endif
 #define SERIAL_N 20000
 #define THREADS 8
 #define PER_THREAD 5000
