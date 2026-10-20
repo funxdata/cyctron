@@ -36,6 +36,26 @@ if(EXISTS "${LIBARY_PLUGIN}")
     set_tests_properties(libary_stress PROPERTIES TIMEOUT 120)
 endif()
 
+# ---------- SSE：插件存在时注册 ----------
+if(WIN32)
+    set(SSE_PLUGIN "${CMAKE_SOURCE_DIR}/libary/sse_demo.dll")
+else()
+    set(SSE_PLUGIN "${CMAKE_SOURCE_DIR}/libary/sse_demo.so")
+endif()
+
+add_executable(test_sse test_sse.c
+    ../src/handler_sse.c ../src/calldyn.c
+    ../crates/mongoose/mongoose.c ../crates/log/src/log.c)
+target_include_directories(test_sse PRIVATE
+    ../include ../crates/mongoose ../crates/log/src ${FFI_INCLUDE_DIRS})
+target_link_libraries(test_sse PRIVATE
+    ${FFI_LIBRARIES} ${CMAKE_DL_LIBS} ${PLATFORM_LIBS})
+
+if(EXISTS "${SSE_PLUGIN}")
+    add_test(NAME sse COMMAND test_sse WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(sse PROPERTIES TIMEOUT 60)
+endif()
+
 if(NOT WIN32)
     add_executable(test_calldyn test_calldyn.c ../src/calldyn.c ../crates/log/src/log.c)
     target_include_directories(test_calldyn PRIVATE
