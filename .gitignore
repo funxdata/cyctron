@@ -40,11 +40,12 @@ libary/
 chat
 /**/*.swp
 /core*
+# 构建产物：build/ 与 build-*/（合并说明：保留 libary 分支的 build*/ 规则）
 build*/
 cyctron.exe
-publish*.exe
+publish*
+# 第三方子模块/未初始化目录：由 .gitmodules 管理，不提交其内部改动
 crates/criterion*
 crates/libffi
 crates/mongoose*
 crates/nng*
-

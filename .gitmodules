@@ -1,3 +1,5 @@
+# 第三方子模块（合并说明：保留 developer 分支的 tab 缩进与 nng v1.12.0 分支，
+# 同时采纳 libary 分支对 nng 测试的关闭策略，见根目录 CMakeLists.txt）
 [submodule "crates/log"]
 	path = crates/log
 	url = git@github.com:rxi/log.c.git
@@ -15,5 +17,5 @@
 	url = git@github.com:HardySimpson/zlog.git
 [submodule "crates/nng"]
 	path = crates/nng
-    url = git@github.com:nanomsg/nng.git
-    branch = v1.12.0
+	url = git@github.com:nanomsg/nng.git
+	branch = v1.12.0
