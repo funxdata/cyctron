@@ -1,6 +1,7 @@
 // test_libary_stress.c - libary_demo FFI 压力测试
 // 串行 + 多线程并发调用动态库，验证零失败并输出吞吐
 #include "../include/calldyn.h"
+#include "stress_report.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,17 +69,32 @@ int main(void) {
     // ---------- 串行 ----------
     {
         double t0 = now_ms();
+        int done = 0;
         for (int i = 0; i < SERIAL_N; i++) {
             rc = call_once("get_handle", NULL);
+            done++;
             if (rc != 0) { hard_fail++; break; }
         }
         double dt = now_ms() - t0;
+
+        stress_result_t report = {
+            .suite = "ffi",
+            .case_name = "serial_get",
+            .threads = 1,
+            .iterations = done,
+            .duration_ms = dt,
+            .failures = hard_fail,
+            .status = hard_fail ? "FAIL" : "PASS",
+            .notes = "libary_demo get_handle, serial"
+        };
+        stress_report_write(&report);
+
         if (hard_fail) {
-            printf("  [FAIL] serial: rc=%d at iter %d\n", rc, SERIAL_N);
+            printf("  [FAIL] serial: rc=%d at iter %d\n", rc, done);
             return 1;
         }
         printf("  [PASS] serial %d calls in %.1f ms (%.0f ops/s)\n",
-               SERIAL_N, dt, SERIAL_N / (dt / 1000.0));
+               done, dt, done / (dt / 1000.0));
     }
 
     // ---------- 并发 ----------
@@ -99,6 +115,18 @@ int main(void) {
         for (int i = 0; i < THREADS; i++) total_fail += results[i].failures;
 
         int total_calls = THREADS * PER_THREAD;
+        stress_result_t report = {
+            .suite = "ffi",
+            .case_name = "concurrent_mixed",
+            .threads = THREADS,
+            .iterations = total_calls,
+            .duration_ms = dt,
+            .failures = total_fail,
+            .status = total_fail ? "FAIL" : "PASS",
+            .notes = "libary_demo get/post/patch mixed, pthread"
+        };
+        stress_report_write(&report);
+
         if (total_fail != 0) {
             printf("  [FAIL] concurrent: %d/%d failures\n", total_fail, total_calls);
             return 1;
