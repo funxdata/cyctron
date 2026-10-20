@@ -1,0 +1,31 @@
+# 测试说明：
+#   - test_calldyn / test_dyn_socket: FFI 插件联调测试，运行前需构建 Rust 插件
+#     并拷贝到 ./core/（见 examples/），插件缺失时自动跳过 CTest 注册
+#   - test_nng_ipc: NNG IPC 演示（无限循环），仅构建，不注册 CTest
+#   - test_basic / test_data / test_multiple / test_pause_resume /
+#     test_performance / test_realtime: 基于旧版 realtime API，待迁移后接入
+
+if(NOT WIN32)
+    add_executable(test_calldyn test_calldyn.c ../src/calldyn.c ../crates/log/src/log.c)
+    target_include_directories(test_calldyn PRIVATE
+        ../include ../crates/log/src ${FFI_INCLUDE_DIRS})
+    target_link_libraries(test_calldyn PRIVATE
+        ${FFI_LIBRARIES} ${CMAKE_DL_LIBS} ${PLATFORM_LIBS})
+
+    add_executable(test_dyn_socket test_dyn_socket.c ../src/calldyn.c ../crates/log/src/log.c)
+    target_include_directories(test_dyn_socket PRIVATE
+        ../include ../crates/log/src ${FFI_INCLUDE_DIRS})
+    target_link_libraries(test_dyn_socket PRIVATE
+        ${FFI_LIBRARIES} ${CMAKE_DL_LIBS} ${PLATFORM_LIBS})
+
+    add_executable(test_nng_ipc test_nng_ipc.c)
+    target_link_libraries(test_nng_ipc PRIVATE nng ${PLATFORM_LIBS})
+
+    # test_dyn_socket 与 libsoket_demo 插件 API 不匹配（插件未导出
+    # process_pause/resume/status/close，且 process_init 不退出），暂不注册，
+    # 待插件补齐符号和退出逻辑后再 add_test
+    if(EXISTS "${CMAKE_SOURCE_DIR}/core/librust_demo.so")
+        add_test(NAME calldyn COMMAND test_calldyn WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        set_tests_properties(calldyn PROPERTIES TIMEOUT 60)
+    endif()
+endif()

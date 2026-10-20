@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
     } 
     else {
         log_info("Unknown command: %s\n", argv[1]);
-        log_info(argv[0]);
+        log_info("%s", argv[0]);
         return 1;
     }
 

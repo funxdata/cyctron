@@ -16,30 +16,21 @@ static rt_manager_t *g_rt_manager = NULL;
 // ============================================
 //  JSON 提取辅助（通用）
 // ============================================
-static char* json_get_string(const char *json, const char *key) {
-    static char value[512];
+static int extract_field(const char *data, const char *key, char *buf, size_t size) {
     char search_key[128];
     snprintf(search_key, sizeof(search_key), "\"%s\":\"", key);
-    
-    const char *start = strstr(json, search_key);
-    if (!start) return NULL;
-    
+
+    const char *start = strstr(data, search_key);
+    if (!start) return -1;
+
     start += strlen(search_key);
     const char *end = strchr(start, '"');
-    if (!end) return NULL;
-    
-    size_t len = end - start;
-    if (len >= sizeof(value)) len = sizeof(value) - 1;
-    memcpy(value, start, len);
-    value[len] = '\0';
-    return value;
-}
+    if (!end) return -1;
 
-static int extract_field(const char *data, const char *key, char *buf, size_t size) {
-    char *val = json_get_string(data, key);
-    if (!val) return -1;
-    strncpy(buf, val, size - 1);
-    buf[size - 1] = '\0';
+    size_t len = end - start;
+    if (len >= size) len = size - 1;
+    memcpy(buf, start, len);
+    buf[len] = '\0';
     return 0;
 }
 
@@ -119,7 +110,7 @@ static void handle_msg(const char *data) {
     
     rt_task_t *task = rt_find_task_by_uuid(g_rt_manager, uuid);
     if (task) {
-        event_push_with_type("msg", msg_data);
+        event_push_json_string("msg", msg_data);
         send_event("msg", uuid, "sent");
         log_info("[WS] Msg sent to %s: %s", uuid, msg_data);
     } else {
@@ -146,10 +137,12 @@ static void handle_ws_message(const char *data, size_t len) {
     
     // 非 JSON
     if (data[0] != '{') {
-        char json_data[512];
-        snprintf(json_data, sizeof(json_data), 
-                 "{\"message\":\"%.*s\",\"len\":%zu}", 
-                 (int)(len < 400 ? len : 400), data, len);
+        char esc[4096];
+        event_escape_json(data, esc, sizeof(esc));
+        char json_data[4224];
+        snprintf(json_data, sizeof(json_data),
+                 "{\"message\":\"%s\",\"len\":%zu}",
+                 esc, len);
         event_push_with_type("echo", json_data);
         return;
     }
@@ -172,8 +165,10 @@ static void handle_ws_message(const char *data, size_t len) {
     } else if (strcmp(cmd, "msg") == 0) {
         handle_msg(data);
     } else {
-        char resp[128];
-        snprintf(resp, sizeof(resp), "{\"cmd\":\"%s\",\"status\":\"unknown\"}", cmd);
+        char ecmd[128];
+        event_escape_json(cmd, ecmd, sizeof(ecmd));
+        char resp[288];
+        snprintf(resp, sizeof(resp), "{\"cmd\":\"%s\",\"status\":\"unknown\"}", ecmd);
         event_push_with_type("error", resp);
         log_warn("[WS] Unknown command: %s", cmd);
     }

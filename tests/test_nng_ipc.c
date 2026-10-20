@@ -41,6 +41,8 @@
 #include <pthread.h>
 #include <time.h>
 #include <nng/nng.h>
+#include <nng/protocol/pubsub0/pub.h>
+#include <nng/protocol/pubsub0/sub.h>
 
 static volatile int g_running = 1;
 

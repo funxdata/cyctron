@@ -18,7 +18,12 @@ typedef enum {
 } ct_content_type;
 
 // -------------------------------
-// 内容类型解析函数
+// 检查 URI 是否含路径遍历（"..")
+// -------------------------------
+int uri_has_traversal(const char *uri);
+
+// -------------------------------
+// Content-Type 解析函数
 // 根据 HTTP Header 的 Content-Type 返回对应枚举
 // -------------------------------
 ct_content_type parse_content_type(const char *content_type);

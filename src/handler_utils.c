@@ -25,6 +25,11 @@ void build_ffi_path(const char *uri, const char *dir, char *out, size_t out_size
 }
 
 
+// 拒绝含 ".." 的 URI，防止 ../ 路径遍历
+int uri_has_traversal(const char *uri) {
+    return uri && strstr(uri, "..") != NULL;
+}
+
 ct_content_type parse_content_type(const char *content_type) {
     if (!content_type || *content_type == '\0')
         return CT_UNKNOWN;

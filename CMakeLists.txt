@@ -1,11 +1,12 @@
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.28)
 project(cyctron C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# 关闭 NNG 自带测试，避免污染 ctest
+set(NNG_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(crates/nng)
-
 set(CORE_SOURCES
     src/main.c
     src/realtime.c
@@ -68,4 +69,7 @@ target_link_libraries(cyctron PRIVATE
     ${PLATFORM_LIBS}
     nng
 )
+
+enable_testing()
+add_subdirectory(tests)
 

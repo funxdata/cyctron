@@ -85,23 +85,73 @@ void event_push(const char *data) {
     nng_push_internal(data);
 }
 
+void event_escape_json(const char *in, char *out, size_t out_size) {
+    if (!out || out_size == 0) return;
+    if (!in) { out[0] = '\0'; return; }
+
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *) in; *p; p++) {
+        const char *rep = NULL;
+        switch (*p) {
+            case '"':  rep = "\\\""; break;
+            case '\\': rep = "\\\\"; break;
+            case '\n': rep = "\\n";  break;
+            case '\r': rep = "\\r";  break;
+            case '\t': rep = "\\t";  break;
+            default:
+                if (*p < 0x20) continue;
+                break;
+        }
+        if (rep) {
+            size_t n = strlen(rep);
+            if (o + n >= out_size) break;
+            memcpy(out + o, rep, n);
+            o += n;
+        } else {
+            if (o + 1 >= out_size) break;
+            out[o++] = (char) *p;
+        }
+    }
+    out[o] = '\0';
+}
+
 void event_push_with_type(const char *type, const char *data) {
     if (!type || !data) return;
-    
+
+    char etype[128];
+    event_escape_json(type, etype, sizeof(etype));
+
     char buffer[2048];
     snprintf(buffer, sizeof(buffer),
              "{\"type\":\"%s\",\"data\":%s,\"timestamp\":%ld}",
-             type, data, time(NULL));
+             etype, data, time(NULL));
     event_push(buffer);
 }
 
 void event_push_message(const char *msg) {
     if (!msg) return;
-    
+
+    char emsg[1536];
+    event_escape_json(msg, emsg, sizeof(emsg));
+
     char buffer[2048];
     snprintf(buffer, sizeof(buffer),
              "{\"type\":\"message\",\"message\":\"%s\",\"timestamp\":%ld}",
-             msg, time(NULL));
+             emsg, time(NULL));
+    event_push(buffer);
+}
+
+void event_push_json_string(const char *type, const char *str) {
+    if (!type || !str) return;
+
+    char etype[128], estr[1536];
+    event_escape_json(type, etype, sizeof(etype));
+    event_escape_json(str, estr, sizeof(estr));
+
+    char buffer[2048];
+    snprintf(buffer, sizeof(buffer),
+             "{\"type\":\"%s\",\"data\":\"%s\",\"timestamp\":%ld}",
+             etype, estr, time(NULL));
     event_push(buffer);
 }
 

@@ -24,6 +24,15 @@ void ev_handler_libary(struct mg_connection *c, int ev, void *ev_data) {
              : (int)sizeof(uri) - 1;
     memcpy(uri, hm->uri.buf, ulen);
     uri[ulen] = '\0';
+
+    if (uri_has_traversal(uri)) {
+        mg_http_reply(c, 400,
+            "Access-Control-Allow-Origin: *\r\n"
+            "Content-Type: application/json\r\n",
+            "{\"error\":400,\"message\":\"Bad Request\"}");
+        return;
+    }
+
     const char *clean_uri = uri[0] == '/' ? uri + 1 : uri;
     snprintf(ffi_path, sizeof(ffi_path),
              "%s%s%s%s", LIBARY_DIR,PATH_SEP, clean_uri, FFI_EXT);

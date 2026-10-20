@@ -60,10 +60,12 @@ static rt_task_node_t* find_node(const char *uuid) {
 }
 
 static void send_rt_event(const char *action, const char *uuid, const char *status) {
+    char euuid[128];
+    event_escape_json(uuid ? uuid : "", euuid, sizeof(euuid));
     char msg[256];
-    snprintf(msg, sizeof(msg), 
+    snprintf(msg, sizeof(msg),
              "{\"action\":\"%s\",\"uuid\":\"%s\",\"status\":\"%s\"}",
-             action, uuid ? uuid : "", status ? status : "");
+             action, euuid, status ? status : "");
     event_push_with_type("realtime", msg);
 }
 
@@ -252,9 +254,13 @@ rt_task_t* rt_find_task_by_uuid(rt_manager_t *mgr, const char *uuid) {
 int rt_send_msg(rt_task_t *task, const char *data) {
     if (!task || !data) return -1;
     if (task->status != RT_TASK_RUNNING) return -2;
-    
-    char msg[512];
-    snprintf(msg, sizeof(msg), "{\"target\":\"%s\",\"data\":\"%s\"}", task->uuid, data);
+
+    char euuid[128], edata[1024];
+    event_escape_json(task->uuid, euuid, sizeof(euuid));
+    event_escape_json(data, edata, sizeof(edata));
+
+    char msg[1152];
+    snprintf(msg, sizeof(msg), "{\"target\":\"%s\",\"data\":\"%s\"}", euuid, edata);
     event_push_with_type("msg", msg);
     log_info("[Scheduler] Msg sent to %s", task->uuid);
     return 0;

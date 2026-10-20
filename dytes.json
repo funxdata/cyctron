@@ -1,6 +1,6 @@
 {
   "name": "cyctron",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "system for communication",
   "main": "index.js",
   "type": "core"
