@@ -5,6 +5,8 @@
 #include "log.h"
 #include "server.h"
 #include "event_pusher.h"
+#include <sys/stat.h>
+#include "global.h"
 #include "handler_ws.h"
 
 extern struct mg_connection *g_ws_conn;
@@ -115,49 +117,39 @@ void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
                 }
             }
             
+            // ====== libary 插件路由（任意方法，含 GET/HEAD） ======
+            // URI 对应 ./libary/<name>.so 存在时优先交给 libary handler
+            {
+                char probe[512];
+                size_t plen = hm->uri.len < sizeof(probe) - 1 ? hm->uri.len : sizeof(probe) - 1;
+                memcpy(probe, hm->uri.buf, plen);
+                probe[plen] = '\0';
+                char *q = strchr(probe, '?');
+                if (q) *q = '\0';
+
+                const char *clean = probe[0] == '/' ? probe + 1 : probe;
+                if (*clean && !uri_has_traversal(probe)) {
+                    char lib_path[600];
+                    snprintf(lib_path, sizeof(lib_path), "%s%s%s%s",
+                             LIBARY_DIR, PATH_SEP, clean, FFI_EXT);
+                    struct stat st;
+                    if (stat(lib_path, &st) == 0) {
+                        event_push_with_type("libary", "{\"operation\":\"library_call\"}");
+                        ev_handler_libary(c, ev, ev_data);
+                        return;
+                    }
+                }
+            }
+
             // ====== 静态文件（GET/HEAD） ======
             if (strcmp(method, "GET") == 0 || strcmp(method, "HEAD") == 0) {
                 ev_handler_static(c, ev, ev_data);
                 return;
             }
 
-            // ====== /os ======
-            if (hm->uri.len >= 3 && strncmp(hm->uri.buf, "/os", 3) == 0) {
-                event_push_with_type("os", "{\"operation\":\"os_request\"}");
-                ev_handler_os(c, ev, ev_data);
-                return;
-            }
-            
-            // ====== Content-Type 路由 ======
-            char content_type[128] = "";
-            const struct mg_str *ctype_hdr = mg_http_get_header(hm, "Content-Type");
-            if (ctype_hdr) {
-                size_t n = ctype_hdr->len < sizeof(content_type)-1 ? ctype_hdr->len : sizeof(content_type)-1;
-                memcpy(content_type, ctype_hdr->buf, n);
-                content_type[n] = '\0';
-            }
-            
-            switch (parse_content_type(content_type)) {
-                case CT_DATABASE: 
-                    event_push_with_type("database", "{\"operation\":\"query\"}");
-                    ev_handler_database(c, ev, ev_data);
-                    return;
-                case CT_OS:       
-                    event_push_with_type("os", "{\"operation\":\"os_call\"}");
-                    ev_handler_os(c, ev, ev_data); 
-                    return;
-                case CT_LIBARY:   
-                    event_push_with_type("libary", "{\"operation\":\"library_call\"}");
-                    ev_handler_libary(c, ev, ev_data); 
-                    return;
-                case CT_CHAT:     
-                    event_push_with_type("chat", "{\"operation\":\"chat_message\"}");
-                    ev_handler_chat(c, ev, ev_data); 
-                    return;
-                default:
-                    reply_json(c, 404, "{\"error\":404,\"message\":\"Not Found\"}");
-                    return;
-            }
+            // ====== 其余请求统一路由到 libary 动态库 ======
+            event_push_with_type("libary", "{\"operation\":\"library_call\"}");
+            ev_handler_libary(c, ev, ev_data);
             break;
         }
 

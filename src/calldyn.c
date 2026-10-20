@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ffi.h>
+#include <pthread.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -22,16 +23,69 @@
 
 typedef int (*plugin_fn_t)(const char* in, char* out);
 
+// dlopen 句柄缓存：动态库常驻，保证库内 static 状态（自增 id 等）
+// 在多次调用间保持；也避免每次请求重复 dlopen 的开销。
+// 快路径无锁读（表只增不改，写入端有锁 + 全量写屏障保证可见性）
+#define DL_CACHE_MAX 32
+
+typedef struct {
+    char path[256];
+    DL_HANDLE handle;
+} dl_cache_entry_t;
+
+static dl_cache_entry_t g_dl_cache[DL_CACHE_MAX];
+static volatile int g_dl_cache_count = 0;
+#ifndef _WIN32
+static pthread_mutex_t g_dl_mutex = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
+static DL_HANDLE dl_get(const char *path) {
+    // 快路径：无锁查表（条目一旦写入不再修改，count 只增）
+    int n = g_dl_cache_count;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(g_dl_cache[i].path, path) == 0) {
+            return g_dl_cache[i].handle;
+        }
+    }
+
+    // 慢路径：加锁加载并插入
+#ifndef _WIN32
+    pthread_mutex_lock(&g_dl_mutex);
+#endif
+    DL_HANDLE handle = NULL;
+    // 双重检查：等锁期间可能已被其他线程插入
+    for (int i = 0; i < g_dl_cache_count; i++) {
+        if (strcmp(g_dl_cache[i].path, path) == 0) {
+            handle = g_dl_cache[i].handle;
+            break;
+        }
+    }
+    if (!handle && g_dl_cache_count < DL_CACHE_MAX) {
+        handle = dlopen(path, RTLD_NOW
+        #ifndef _WIN32
+         | RTLD_LOCAL
+        #endif
+        );
+        if (handle) {
+            snprintf(g_dl_cache[g_dl_cache_count].path,
+                     sizeof(g_dl_cache[0].path), "%s", path);
+            g_dl_cache[g_dl_cache_count].handle = handle;
+            __sync_synchronize();
+            g_dl_cache_count++;
+        }
+    }
+#ifndef _WIN32
+    pthread_mutex_unlock(&g_dl_mutex);
+#endif
+    return handle;
+}
+
 int call_local_dyn_libffi(const char *ffi_path, const char *func_name, const char *json_in, char **json_out)
 {
     if (!ffi_path || !func_name || !json_out) return -100;
     *json_out = NULL;
 
-    DL_HANDLE handle = dlopen(ffi_path, RTLD_NOW
-    #ifndef _WIN32
-     | RTLD_LOCAL
-    #endif
-    );
+    DL_HANDLE handle = dl_get(ffi_path);
     if (!handle) {
         fprintf(stderr, "[ffi] load library failed: %s\n", dlerror());
         return -1;
@@ -39,14 +93,12 @@ int call_local_dyn_libffi(const char *ffi_path, const char *func_name, const cha
     void *fn_ptr = dlsym(handle, func_name);
     if (!fn_ptr) {
         fprintf(stderr, "[ffi] dlsym failed: %s\n", dlerror());
-        dlclose(handle);
         return -2;
     }
     
     char *buf = (char*)malloc(PLUGIN_JSON_BUF_SIZE);
     if (!buf) {
         fprintf(stderr, "[ffi] malloc failed\n");
-        dlclose(handle);
         return -3;
     }
     memset(buf, 0, PLUGIN_JSON_BUF_SIZE);
@@ -75,7 +127,6 @@ int call_local_dyn_libffi(const char *ffi_path, const char *func_name, const cha
     }
     
     *json_out = buf;
-    dlclose(handle);
 
     return rc;
 }

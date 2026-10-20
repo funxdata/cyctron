@@ -29,6 +29,26 @@ if(NOT WIN32)
     target_link_libraries(test_static PRIVATE ${CMAKE_DL_LIBS} ${PLATFORM_LIBS})
     add_test(NAME static COMMAND test_static)
 
+    add_executable(test_libary test_libary.c
+        ../src/calldyn.c ../crates/log/src/log.c)
+    target_include_directories(test_libary PRIVATE
+        ../include ../crates/log/src ${FFI_INCLUDE_DIRS})
+    target_link_libraries(test_libary PRIVATE
+        ${FFI_LIBRARIES} ${CMAKE_DL_LIBS} ${PLATFORM_LIBS})
+
+    add_executable(test_libary_stress test_libary_stress.c
+        ../src/calldyn.c ../crates/log/src/log.c)
+    target_include_directories(test_libary_stress PRIVATE
+        ../include ../crates/log/src ${FFI_INCLUDE_DIRS})
+    target_link_libraries(test_libary_stress PRIVATE
+        ${FFI_LIBRARIES} ${CMAKE_DL_LIBS} ${PLATFORM_LIBS})
+
+    if(EXISTS "${CMAKE_SOURCE_DIR}/libary/libary_demo.so")
+        add_test(NAME libary COMMAND test_libary WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        add_test(NAME libary_stress COMMAND test_libary_stress
+                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    endif()
+
     # test_dyn_socket 与 libsoket_demo 插件 API 不匹配（插件未导出
     # process_pause/resume/status/close，且 process_init 不退出），暂不注册，
     # 待插件补齐符号和退出逻辑后再 add_test
