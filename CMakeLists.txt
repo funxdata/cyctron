@@ -14,9 +14,6 @@ set(CORE_SOURCES
     src/event_pusher.c
     src/handler_static.c
     src/handler_utils.c
-    src/handler_os.c
-    src/handler_database.c
-    src/handler_chat.c
     src/handler_libary.c
     src/handler_ws.c
     src/calldyn.c
@@ -38,15 +35,26 @@ if(WIN32)
     add_compile_definitions(
         _WIN32_WINNT=0x0600
         WIN32_LEAN_AND_MEAN
-        NO_LIBFFI
+        _CRT_SECURE_NO_WARNINGS
 
         EV_STANDALONE=1
         EV_USE_WIN32=1
         EV_USE_SELECT=1
     )
+
+    # Windows 使用仓库内置的静态 libffi（MinGW）
+    set(LIBFFI_DIR ${CMAKE_SOURCE_DIR}/crates/libffi-packages)
+    if(EXISTS ${LIBFFI_DIR}/libffi.a)
+        set(FFI_INCLUDE_DIRS ${LIBFFI_DIR})
+        set(FFI_LIBRARIES ${LIBFFI_DIR}/libffi.a)
+    else()
+        message(FATAL_ERROR "libffi.a not found in ${LIBFFI_DIR}")
+    endif()
 else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(FFI REQUIRED libffi)
+    set(FFI_INCLUDE_DIRS ${FFI_INCLUDE_DIRS})
+    set(FFI_LIBRARIES ${FFI_LIBRARIES})
 
     list(APPEND PLATFORM_LIBS ${FFI_LIBRARIES} dl)
 endif()
@@ -64,9 +72,10 @@ target_include_directories(cyctron PRIVATE
     ${FFI_INCLUDE_DIRS}
 )
 
-# 链接 NNG（CMake 会自动处理路径）
+# 链接 NNG（CMake 会自动处理路径）与 libffi
 target_link_libraries(cyctron PRIVATE
     ${PLATFORM_LIBS}
+    ${FFI_LIBRARIES}
     nng
 )
 
