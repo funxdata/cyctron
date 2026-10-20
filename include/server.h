@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #define MAX_METHOD        16
 #define MAX_URI          256
 #define MAX_CONTENT_TYPE 128
@@ -21,6 +23,12 @@ typedef enum {
 // 检查 URI 是否含路径遍历（"..")
 // -------------------------------
 int uri_has_traversal(const char *uri);
+
+// -------------------------------
+// 解析静态文件 URI 到磁盘路径（相对项目根）
+// 返回 0 成功，-1 非法（含 ..）
+// -------------------------------
+int static_resolve_path(const char *uri, char *out, size_t out_size);
 
 // -------------------------------
 // Content-Type 解析函数
