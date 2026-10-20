@@ -21,6 +21,14 @@ if(NOT WIN32)
     add_executable(test_nng_ipc test_nng_ipc.c)
     target_link_libraries(test_nng_ipc PRIVATE nng ${PLATFORM_LIBS})
 
+    add_executable(test_static test_static.c
+        ../src/handler_static.c ../src/handler_utils.c ../src/core/uri.c
+        ../crates/mongoose/mongoose.c ../crates/log/src/log.c)
+    target_include_directories(test_static PRIVATE
+        ../include ../crates/mongoose ../crates/log/src)
+    target_link_libraries(test_static PRIVATE ${CMAKE_DL_LIBS} ${PLATFORM_LIBS})
+    add_test(NAME static COMMAND test_static)
+
     # test_dyn_socket 与 libsoket_demo 插件 API 不匹配（插件未导出
     # process_pause/resume/status/close，且 process_init 不退出），暂不注册，
     # 待插件补齐符号和退出逻辑后再 add_test

@@ -70,6 +70,9 @@ target_link_libraries(cyctron PRIVATE
     nng
 )
 
+# 主程序生成到项目主目录（./cyctron）
+set_target_properties(cyctron PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
 enable_testing()
 add_subdirectory(tests)
 

@@ -115,12 +115,12 @@ void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
                 }
             }
             
-            // ====== 静态文件 ======
+            // ====== 静态文件（GET/HEAD） ======
             if (strcmp(method, "GET") == 0 || strcmp(method, "HEAD") == 0) {
                 ev_handler_static(c, ev, ev_data);
                 return;
             }
-            
+
             // ====== /os ======
             if (hm->uri.len >= 3 && strncmp(hm->uri.buf, "/os", 3) == 0) {
                 event_push_with_type("os", "{\"operation\":\"os_request\"}");
