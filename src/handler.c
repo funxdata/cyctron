@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include "global.h"
 #include "handler_ws.h"
+#include "handler_sse.h"
 
 extern struct mg_connection *g_ws_conn;
 extern pthread_mutex_t g_ws_mutex;
@@ -54,6 +55,12 @@ void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
                 return;
             }
             
+            // ====== SSE ======
+            if (hm->uri.len == 4 && strncmp(hm->uri.buf, "/sse", 4) == 0) {
+                ev_handler_sse(c, ev, ev_data);
+                return;
+            }
+
             // ====== HTTP API ======
             if (hm->uri.len >= 10 && strncmp(hm->uri.buf, "/api/push", 10) == 0) {
                 if (strcmp(method, "POST") == 0) {
@@ -156,7 +163,14 @@ void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
         // WebSocket 事件由 ws_ev_handler 处理
         case MG_EV_WS_OPEN:
         case MG_EV_WS_MSG:
+            break;
+
+        // SSE 长连接：主循环轮询与关闭清理
+        case MG_EV_POLL:
+            sse_on_poll(c);
+            break;
         case MG_EV_CLOSE:
+            sse_on_close(c);
             break;
 
         default:
