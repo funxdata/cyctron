@@ -15,6 +15,28 @@ Last-Event-ID: <可选>
 | --- | --- | --- |
 | `interval_ms` | 200 | 拉取间隔，限制 50–5000 ms |
 | `Last-Event-ID` | 0 | 断线重连时从该 id 之后继续 |
+| `lib` | `sse_demo` | 要调用的插件名（对应 `./libary/<lib>.<ext>`） |
+| `symbol` | `sse_next` | 插件导出符号 |
+| `args` | 空 | 传给符号的 JSON（URL 编码） |
+| `once` | 0 | `1` 表示只调用一次；弹窗类接口必须设置，避免反复弹窗 |
+
+### 1.1 通用插件调用
+
+除默认的 `sse_demo` / `sse_next` 外，可以指定任意 libary 插件和符号：
+
+```
+GET /sse?lib=sys_info&symbol=post_cur_dir&interval_ms=1000
+GET /sse?lib=sys_info&symbol=post_file_exists&args=%7B%22path%22%3A%22README.md%22%7D
+GET /sse?lib=sys_info&symbol=post_choose_file&once=1
+GET /sse?lib=sys_info&symbol=post_choose_dir&once=1
+```
+
+- `id`：连接内自增序号。
+- `event`：`symbol` 名称。
+- `data`：插件返回的 JSON 原文。
+- `custom` 模式下不使用 `Last-Event-ID`，每次连接从 1 开始。
+- `lib` / `symbol` 只允许字母、数字、`_`、`-`；非法返回 400。
+- 文件/目录选择等弹窗接口使用 `once=1`，否则 SSE 轮询会反复弹出对话框。
 
 响应头：
 
@@ -138,6 +160,12 @@ ctest --test-dir build -R "^sse$" --output-on-failure
 # 接口测试（先启动服务）
 ./cyctron start
 deno run --allow-net ts/sse_request.ts 44944
+deno run --allow-net --allow-read --allow-write ts/sse_dir.ts 44944
+deno run --allow-net ts/sse_file.ts 44944
+deno run --allow-net ts/choose_file.ts 44944
+deno run --allow-net ts/choose_dir.ts 44944
 ```
 
-覆盖：响应头、事件数量、id 递增、data JSON、`Last-Event-ID` 续传、POST 405。
+覆盖：响应头、事件数量、id 递增、data JSON、`Last-Event-ID` 续传、POST 405；
+`sse_dir.ts` / `sse_file.ts` 通过 SSE 调用 `sys_info.dll` 的目录/文件接口；
+`choose_file.ts` / `choose_dir.ts` 调用系统选择对话框，需要桌面交互。
