@@ -50,4 +50,3 @@ test-results/
 crates/criterion*
 crates/libffi
 crates/mongoose*
-crates/nng*
