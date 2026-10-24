@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebSocket 动态库测试</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", Roboto, sans-serif;
+      background: #1e1e2f;
+      color: #e0e0e0;
+      padding: 20px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    h1 {
+      text-align: center;
+      color: #a6e22e;
+    }
+    .card {
+      background: #2d2d44;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      flex-wrap: wrap;
+    }
+    .status-led {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .connected .status-led { background: #4caf50; }
+    .disconnected .status-led { background: #f44336; }
+    .btn-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    button {
+      background: #3b3b5c;
+      border: none;
+      color: white;
+      padding: 8px 18px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.2s;
+    }
+    button:hover { background: #5a5a8a; }
+    button:active { transform: scale(0.96); }
+    button.primary { background: #6c5ce7; }
+    button.primary:hover { background: #7d6ff0; }
+    button.danger { background: #d63031; }
+    button.danger:hover { background: #e74c3c; }
+    button.success { background: #00b894; }
+    button.success:hover { background: #00ce9b; }
+    input {
+      background: #3b3b5c;
+      border: 1px solid #555;
+      color: #eee;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    input:focus { outline: 2px solid #6c5ce7; }
+    .log-area {
+      background: #1a1a2e;
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: "Consolas", monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-entry {
+      padding: 2px 0;
+      border-bottom: 1px solid #2a2a40;
+    }
+    .log-time { color: #888; }
+    .log-sent { color: #fdcb6e; }
+    .log-received { color: #55efc4; }
+    .log-error { color: #ff7675; }
+    .log-info { color: #74b9ff; }
+    .flex-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    label { font-weight: 500; }
+    .small { font-size: 13px; opacity: 0.8; }
+  </style>
+</head>
+<body>
+
+<h1>🧪 Cyctron 动态库 WebSocket 测试</h1>
+
+<!-- 连接状态 -->
+<div class="card status-bar" id="statusCard">
+  <span id="statusText" class="disconnected">
+    <span class="status-led"></span> 未连接
+  </span>
+  <button class="primary" id="connectBtn">连接</button>
+  <button class="danger" id="disconnectBtn" disabled>断开</button>
+  <span class="small">服务器: ws://localhost:44944/soket</span>
+</div>
+
+<!-- 命令区域 -->
+<div class="card">
+  <div class="btn-group">
+    <button class="success" data-cmd="ping">Ping</button>
+    <button class="primary" data-cmd="status">Status (文本)</button>
+    <button class="primary" data-cmd="status_json">Status (JSON)</button>
+    <button class="primary" data-cmd="bind">Bind</button>
+    <button class="danger" data-cmd="remove">Remove</button>
+    <button class="primary" data-cmd="msg">Send Msg</button>
+  </div>
+
+  <div class="flex-row">
+    <label for="uuidInput">UUID:</label>
+    <input type="text" id="uuidInput" value="task-001" style="width:120px;" />
+    <label for="libInput">Lib:</label>
+    <input type="text" id="libInput" value="libsoket_demo" style="width:140px;" />
+    <label for="msgInput">消息内容:</label>
+    <input type="text" id="msgInput" placeholder="Hello" style="width:160px;" />
+  </div>
+  <div class="flex-row">
+    <button id="sendCustomCmdBtn">发送自定义命令</button>
+    <input type="text" id="customCmdInput" placeholder='{"cmd":"bind",...}' style="flex:1; min-width:200px;" />
+  </div>
+</div>
+
+<!-- 日志 -->
+<div class="card">
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <span style="font-weight:bold;">📋 日志</span>
+    <button id="clearLogBtn" style="background:transparent; color:#aaa; padding:2px 8px;">清空</button>
+  </div>
+  <div class="log-area" id="logArea"></div>
+</div>
+
+<script>
+  (function() {
+    // ----- DOM refs -----
+    const statusText = document.getElementById('statusText');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const logArea = document.getElementById('logArea');
+    const uuidInput = document.getElementById('uuidInput');
+    const libInput = document.getElementById('libInput');
+    const msgInput = document.getElementById('msgInput');
+    const customCmdInput = document.getElementById('customCmdInput');
+    const sendCustomCmdBtn = document.getElementById('sendCustomCmdBtn');
+    const clearLogBtn = document.getElementById('clearLogBtn');
+
+    let ws = null;
+    let connected = false;
+
+    // ----- 日志函数 -----
+    function log(message, type = 'info') {
+      const time = new Date().toLocaleTimeString();
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-${type}">${message}</span>`;
+      logArea.appendChild(entry);
+      logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    function logSent(message) {
+      log(`📤 ${message}`, 'sent');
+    }
+
+    function logReceived(message) {
+      log(`📥 ${message}`, 'received');
+    }
+
+    function logError(message) {
+      log(`❌ ${message}`, 'error');
+    }
+
+    function clearLog() {
+      logArea.innerHTML = '';
+    }
+
+    // ----- WebSocket 操作 -----
+    function connect() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        logError('已经连接或正在连接中');
+        return;
+      }
+
+      const url = 'ws://localhost:44944/soket';
+      log(`正在连接 ${url} ...`, 'info');
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        connected = true;
+        updateUI();
+        log('✅ 连接成功', 'info');
+      };
+
+      ws.onmessage = (event) => {
+        const data = event.data;
+        // 尝试格式化 JSON
+        let display = data;
+        try {
+          const parsed = JSON.parse(data);
+          display = JSON.stringify(parsed, null, 2);
+        } catch (_) { /* 保持原样 */ }
+        logReceived(display);
+      };
+
+      ws.onclose = (e) => {
+        connected = false;
+        updateUI();
+        log(`🔌 连接关闭 (code=${e.code}, reason=${e.reason || '无'})`, 'error');
+        ws = null;
+      };
+
+      ws.onerror = (err) => {
+        logError(`WebSocket 错误: ${err}`);
+        // 错误后通常会自动触发 onclose
+      };
+    }
+
+    function disconnect() {
+      if (ws) {
+        ws.close();
+        ws = null;
+        connected = false;
+        updateUI();
+        log('已手动断开', 'info');
+      } else {
+        logError('没有活动连接');
+      }
+    }
+
+    function sendMessage(data) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        logError('WebSocket 未连接，无法发送');
+        return false;
+      }
+      const message = typeof data === 'string' ? data : JSON.stringify(data);
+      ws.send(message);
+      logSent(message);
+      return true;
+    }
+
+    function sendCommand(cmd, params = {}) {
+      const payload = { cmd, ...params };
+      return sendMessage(payload);
+    }
+
+    // ----- UI 更新 -----
+    function updateUI() {
+      if (connected) {
+        statusText.className = 'connected';
+        statusText.innerHTML = '<span class="status-led"></span> 已连接';
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+      } else {
+        statusText.className = 'disconnected';
+        statusText.innerHTML = '<span class="status-led"></span> 未连接';
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+      }
+    }
+
+    // ----- 按钮事件绑定 -----
+    // 通用命令按钮
+    document.querySelectorAll('[data-cmd]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cmd = btn.dataset.cmd;
+        const uuid = uuidInput.value.trim() || 'task-001';
+        const lib = libInput.value.trim() || 'libsoket_demo';
+        const msg = msgInput.value.trim() || 'Hello from browser';
+
+        switch (cmd) {
+          case 'ping':
+            sendMessage('ping');
+            break;
+          case 'status':
+            sendMessage('status');
+            break;
+          case 'status_json':
+            sendCommand('status');
+            break;
+          case 'bind':
+            sendCommand('bind', { uuid, lib });
+            break;
+          case 'remove':
+            sendCommand('remove', { uuid });
+            break;
+          case 'msg':
+            sendCommand('msg', { uuid, data: msg });
+            break;
+          default:
+            logError(`未知命令: ${cmd}`);
+        }
+      });
+    });
+
+    // 自定义命令
+    sendCustomCmdBtn.addEventListener('click', () => {
+      const raw = customCmdInput.value.trim();
+      if (!raw) {
+        logError('请输入 JSON 命令');
+        return;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        sendMessage(parsed);
+      } catch (e) {
+        logError(`JSON 解析失败: ${e.message}`);
+      }
+    });
+
+    // 连接/断开
+    connectBtn.addEventListener('click', connect);
+    disconnectBtn.addEventListener('click', disconnect);
+
+    // 清空日志
+    clearLogBtn.addEventListener('click', clearLog);
+
+    // 快捷键：Enter 在输入框中也可触发发送自定义命令（若焦点在 customCmdInput 上）
+    customCmdInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        sendCustomCmdBtn.click();
+      }
+    });
+
+    // 默认进入时自动连接（可选）
+    // 如果希望页面加载后自动连接，取消注释下一行
+    // window.addEventListener('load', connect);
+
+    // 初始 UI
+    updateUI();
+    log('🔧 页面就绪，点击 "连接" 开始测试', 'info');
+  })();
+</script>
+
+</body>
+</html>
