@@ -16,6 +16,8 @@ extern pthread_mutex_t g_ws_mutex;
 // WebSocket 处理函数
 void ws_accept_manual(struct mg_connection *c, struct mg_http_message *hm);
 void ws_ev_handler(struct mg_connection *c, int ev, void *ev_data);
+void ws_on_upgrade(struct mg_connection *c);
+void ws_drain_call_results(void);
 
 #ifdef __cplusplus
 }

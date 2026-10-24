@@ -55,6 +55,11 @@ set(CORE_SOURCES
     src/handler_ws.c
     src/handler_sse.c
     src/calldyn.c
+    src/ws_call.c
+    src/event_format.c
+    src/ws_message.c
+    src/ws_command.c
+    src/ws_worker.c
     src/core/uri.c
     crates/mongoose/mongoose.c
     crates/log/src/log.c

@@ -5,6 +5,8 @@
 #include "mongoose.h"
 #include "server.h"
 #include "event_pusher.h"
+#include "handler_ws.h"
+#include "ws_worker.h"
 
 static void print_help(const char *prog) {
     printf("Usage:\n");
@@ -45,6 +47,11 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
+        if (ws_worker_init() != 0) {
+            log_info("Failed to initialize WebSocket worker");
+            return 1;
+        }
+
         struct mg_mgr mgr;
         mg_mgr_init(&mgr);
 
@@ -57,6 +64,7 @@ int main(int argc, char *argv[]) {
 
         while (1) {
             mg_mgr_poll(&mgr, 50);
+            ws_drain_call_results();
         }
     } 
     else if (strcmp(argv[1], "stop") == 0) {

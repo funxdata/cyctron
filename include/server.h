@@ -13,6 +13,7 @@ int uri_has_traversal(const char *uri);
 // 返回 0 成功，-1 非法（含 ..）
 // -------------------------------
 int static_resolve_path(const char *uri, char *out, size_t out_size);
+int static_should_fallback(const char *uri);
 
 // -------------------------------
 // HTTP Server 事件处理函数声明

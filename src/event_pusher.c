@@ -1,8 +1,10 @@
 #include "event_pusher.h"
+#include "event_format.h"
 #include "log.h"
 #include "mongoose.h"
 #include "handler_ws.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
@@ -85,79 +87,72 @@ void event_push(const char *data) {
     nng_push_internal(data);
 }
 
-void event_escape_json(const char *in, char *out, size_t out_size) {
-    if (!out || out_size == 0) return;
-    if (!in) { out[0] = '\0'; return; }
-
-    size_t o = 0;
-    for (const unsigned char *p = (const unsigned char *) in; *p; p++) {
-        const char *rep = NULL;
-        switch (*p) {
-            case '"':  rep = "\\\""; break;
-            case '\\': rep = "\\\\"; break;
-            case '\n': rep = "\\n";  break;
-            case '\r': rep = "\\r";  break;
-            case '\t': rep = "\\t";  break;
-            default:
-                if (*p < 0x20) continue;
-                break;
-        }
-        if (rep) {
-            size_t n = strlen(rep);
-            if (o + n >= out_size) break;
-            memcpy(out + o, rep, n);
-            o += n;
-        } else {
-            if (o + 1 >= out_size) break;
-            out[o++] = (char) *p;
-        }
-    }
-    out[o] = '\0';
-}
-
 void event_push_with_type(const char *type, const char *data) {
-    if (!type || !data) return;
-
-    char etype[128];
-    event_escape_json(type, etype, sizeof(etype));
-
-    char buffer[2048];
-    snprintf(buffer, sizeof(buffer),
-             "{\"type\":\"%s\",\"data\":%s,\"timestamp\":%ld}",
-             etype, data, time(NULL));
-    event_push(buffer);
+    char *buf = NULL;
+    if (event_format_with_type(type, data, &buf) == 0 && buf) {
+        event_push(buf);
+        free(buf);
+    }
 }
 
 void event_push_message(const char *msg) {
-    if (!msg) return;
-
-    char emsg[1536];
-    event_escape_json(msg, emsg, sizeof(emsg));
-
-    char buffer[2048];
-    snprintf(buffer, sizeof(buffer),
-             "{\"type\":\"message\",\"message\":\"%s\",\"timestamp\":%ld}",
-             emsg, time(NULL));
-    event_push(buffer);
+    char *buf = NULL;
+    if (event_format_message(msg, &buf) == 0 && buf) {
+        event_push(buf);
+        free(buf);
+    }
 }
 
 void event_push_json_string(const char *type, const char *str) {
-    if (!type || !str) return;
-
-    char etype[128], estr[1536];
-    event_escape_json(type, etype, sizeof(etype));
-    event_escape_json(str, estr, sizeof(estr));
-
-    char buffer[2048];
-    snprintf(buffer, sizeof(buffer),
-             "{\"type\":\"%s\",\"data\":\"%s\",\"timestamp\":%ld}",
-             etype, estr, time(NULL));
-    event_push(buffer);
+    char *buf = NULL;
+    if (event_format_json_string(type, str, &buf) == 0 && buf) {
+        event_push(buf);
+        free(buf);
+    }
 }
 
 void event_push_json(const char *json) {
     if (!json) return;
     event_push(json);
+}
+
+
+void event_push_to(struct mg_connection *c, const char *data) {
+    if (!c || !data) return;
+
+    pthread_mutex_lock(&g_ws_mutex);
+    if (c->is_websocket) {
+        mg_ws_send(c, data, strlen(data), WEBSOCKET_OP_TEXT);
+        g_push_count++;
+        log_debug("[EventPusher] WS(to=%lu): %s", c->id, data);
+    }
+    pthread_mutex_unlock(&g_ws_mutex);
+}
+
+void event_push_with_type_to(struct mg_connection *c, const char *type,
+                             const char *data) {
+    char *buf = NULL;
+    if (event_format_with_type(type, data, &buf) == 0 && buf) {
+        event_push_to(c, buf);
+        free(buf);
+    }
+}
+
+void event_push_message_to(struct mg_connection *c, const char *msg) {
+    char *buf = NULL;
+    if (event_format_message(msg, &buf) == 0 && buf) {
+        event_push_to(c, buf);
+        free(buf);
+    }
+}
+
+void event_push_json_string_to(struct mg_connection *c, const char *type,
+                               const char *str) {
+    char *buf = NULL;
+    if (event_format_json_string(type, str, &buf) == 0 && buf) {
+        event_push_to(c, buf);
+        free(buf);
+    }
 }
 
 bool event_pusher_has_connection(void) {

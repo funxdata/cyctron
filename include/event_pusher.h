@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+struct mg_connection;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,6 +25,12 @@ void event_push_json(const char *json);
 
 // 将 str 作为 JSON 字符串值推送：{"type":"<type>","data":"<str>"}
 void event_push_json_string(const char *type, const char *str);
+
+/* Targeted pushes: send only to the given connection. */
+void event_push_to(struct mg_connection *c, const char *data);
+void event_push_with_type_to(struct mg_connection *c, const char *type, const char *data);
+void event_push_message_to(struct mg_connection *c, const char *msg);
+void event_push_json_string_to(struct mg_connection *c, const char *type, const char *str);
 
 // 转义字符串，使其可安全嵌入 JSON 字符串字面量
 void event_escape_json(const char *in, char *out, size_t out_size);

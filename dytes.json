@@ -1,12 +1,15 @@
 {
   "name": "cyctron",
-  "version": "1.0.2",
+  "version": "1.0.13",
   "description": "local http server",
-  "keywords": ["cyctron", "local"],
+  "keywords": [
+    "cyctron",
+    "local"
+  ],
   "author": "funxdata",
   "type": "core",
   "license": "MIT",
   "exports": {
-    "./build/release/cyctron.exe": "cyctron.exe"
+    "./cyctron.exe": "cyctron.exe"
   }
 }

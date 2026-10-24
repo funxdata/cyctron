@@ -118,6 +118,7 @@ rt_task_t* rt_create_task(rt_manager_t *mgr, const char *uuid, const char *socke
     
     node->task.status = RT_TASK_IDLE;
     node->task.manager = mgr;
+    node->task.conn_id = 0;
     node->task.user_data = NULL;
     node->task.on_tick = NULL;
     node->task.on_data = NULL;
@@ -317,6 +318,34 @@ void rt_stop(rt_manager_t *mgr) {
     (void)mgr; 
     g_scheduler.running = 0; 
     log_info("[Scheduler] Stopped");
+}
+
+
+int rt_remove_tasks_by_conn(rt_manager_t *mgr, unsigned long conn_id) {
+    (void)mgr;
+    rt_task_t **victims = NULL;
+    int n = 0, cap = 0;
+
+    pthread_mutex_lock(&g_scheduler.mutex);
+    for (rt_task_node_t *cur = g_scheduler.tasks; cur; cur = cur->next) {
+        if (cur->task.conn_id != conn_id) continue;
+        if (n == cap) {
+            int new_cap = cap ? cap * 2 : 8;
+            rt_task_t **tmp = realloc(victims, sizeof(*victims) * (size_t)new_cap);
+            if (!tmp) break;
+            victims = tmp;
+            cap = new_cap;
+        }
+        victims[n++] = &cur->task;
+    }
+    pthread_mutex_unlock(&g_scheduler.mutex);
+
+    int removed = 0;
+    for (int i = 0; i < n; i++) {
+        if (rt_remove_task(victims[i]) == 0) removed++;
+    }
+    free(victims);
+    return removed;
 }
 
 void rt_cleanup(rt_manager_t *mgr) {

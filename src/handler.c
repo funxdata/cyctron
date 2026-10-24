@@ -46,12 +46,7 @@ void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
                 c->fn = ws_ev_handler;
                 printf("Upgrading connection to WebSocket: %p\n", c);
                 
-                pthread_mutex_lock(&g_ws_mutex);
-                g_ws_conn = c;
-                pthread_mutex_unlock(&g_ws_mutex);
-                
-                event_push_with_type("system", "{\"status\":\"connected\",\"message\":\"WebSocket client connected\"}");
-                event_push_message("Welcome to Cyctron WebSocket Server");
+                ws_on_upgrade(c);
                 return;
             }
             

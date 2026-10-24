@@ -103,3 +103,60 @@ if(NOT WIN32)
         set_tests_properties(calldyn PROPERTIES TIMEOUT 60)
     endif()
 endif()
+
+# ---------- WebSocket call helpers: pure functions, both platforms ----------
+foreach(call_test ws_call ws_call_parse ws_call_errors ws_call_response)
+    add_executable(test_${call_test} test_${call_test}.c
+        ../src/ws_call.c ../crates/mongoose/mongoose.c)
+    target_include_directories(test_${call_test} PRIVATE
+        ../include ../crates/mongoose)
+    target_link_libraries(test_${call_test} PRIVATE ${PLATFORM_LIBS})
+    add_test(NAME ${call_test} COMMAND test_${call_test})
+endforeach()
+
+# ---------- event formatting: pure functions ----------
+add_executable(test_event_push_dynamic test_event_push_dynamic.c ../src/event_format.c)
+target_include_directories(test_event_push_dynamic PRIVATE ../include)
+target_link_libraries(test_event_push_dynamic PRIVATE ${PLATFORM_LIBS})
+add_test(NAME event_push_dynamic COMMAND test_event_push_dynamic)
+
+# ---------- WebSocket message size ----------
+add_executable(test_ws_message_limit test_ws_message_limit.c ../src/ws_message.c)
+target_include_directories(test_ws_message_limit PRIVATE ../include)
+target_link_libraries(test_ws_message_limit PRIVATE ${PLATFORM_LIBS})
+add_test(NAME ws_message_limit COMMAND test_ws_message_limit)
+
+# ---------- static SPA fallback ----------
+add_executable(test_static_spa test_static_spa.c
+    ../src/handler_static.c ../src/handler_utils.c ../src/core/uri.c
+    ../crates/mongoose/mongoose.c ../crates/log/src/log.c)
+target_include_directories(test_static_spa PRIVATE
+    ../include ../crates/mongoose ../crates/log/src)
+target_link_libraries(test_static_spa PRIVATE ${CMAKE_DL_LIBS} ${PLATFORM_LIBS})
+add_test(NAME static_spa COMMAND test_static_spa)
+
+# ---------- legacy command JSON parsing ----------
+add_executable(test_ws_parse_legacy test_ws_parse_legacy.c
+    ../src/ws_command.c ../crates/mongoose/mongoose.c)
+target_include_directories(test_ws_parse_legacy PRIVATE
+    ../include ../crates/mongoose)
+target_link_libraries(test_ws_parse_legacy PRIVATE ${PLATFORM_LIBS})
+add_test(NAME ws_parse_legacy COMMAND test_ws_parse_legacy)
+
+# ---------- realtime task ownership ----------
+add_executable(test_realtime_ownership test_realtime_ownership.c
+    ../src/realtime.c ../crates/log/src/log.c)
+target_include_directories(test_realtime_ownership PRIVATE
+    ../include ../crates/log/src ${CMAKE_SOURCE_DIR}/crates/nng/include)
+target_link_libraries(test_realtime_ownership PRIVATE nng ${PLATFORM_LIBS})
+add_test(NAME realtime_ownership COMMAND test_realtime_ownership)
+
+# ---------- WebSocket worker ----------
+add_executable(test_ws_worker test_ws_worker.c
+    ../src/ws_worker.c ../src/ws_call.c
+    ../crates/mongoose/mongoose.c ../crates/log/src/log.c)
+target_include_directories(test_ws_worker PRIVATE
+    ../include ../crates/mongoose ../crates/log/src)
+target_link_libraries(test_ws_worker PRIVATE ${PLATFORM_LIBS})
+add_test(NAME ws_worker COMMAND test_ws_worker)
+set_tests_properties(ws_worker PROPERTIES TIMEOUT 30)

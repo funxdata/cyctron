@@ -31,6 +31,7 @@ typedef struct rt_task {
     void *user_data;
     struct rt_task *next;
     void *manager;
+    unsigned long conn_id;
     void (*on_tick)(struct rt_task*);
     void (*on_data)(struct rt_task*, void*, size_t);
     void (*on_cleanup)(struct rt_task*);
@@ -48,6 +49,7 @@ int rt_start_task(rt_task_t *task, const char *lib_name);
 int rt_stop_task(rt_task_t *task);
 int rt_remove_task(rt_task_t *task);
 rt_task_t* rt_find_task_by_uuid(rt_manager_t *mgr, const char *uuid);
+int rt_remove_tasks_by_conn(rt_manager_t *mgr, unsigned long conn_id);
 
 void rt_task_set_tick(rt_task_t *task, void (*callback)(rt_task_t*));
 void rt_task_set_data(rt_task_t *task, void (*callback)(rt_task_t*, void*, size_t));
