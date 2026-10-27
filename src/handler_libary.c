@@ -6,6 +6,7 @@
 #include "server.h"
 #include "calldyn.h"
 #include "global.h"
+#include "plugin_path.h"
 
 // 解析 query string 中的数字参数（如 ?id=2），成功返回 0
 static int query_get_long(const char *query, const char *key, long *out) {
@@ -90,7 +91,7 @@ void ev_handler_libary(struct mg_connection *c, int ev, void *ev_data) {
         return;
     }
 
-    // URI → 插件名：/libary_demo → ./libary/libary_demo.so
+    // URI → 插件名：/cdrimex → ./plugins/cdrimex/cdrimex.dll（回退 ./libary/cdrimex.dll）
     // （query 参数由 hm->query 提供，不在 uri 里）
     const char *clean_uri = uri[0] == '/' ? uri + 1 : uri;
     if (!*clean_uri) {
@@ -100,7 +101,13 @@ void ev_handler_libary(struct mg_connection *c, int ev, void *ev_data) {
             "{\"error\":404,\"message\":\"Not Found\"}");
         return;
     }
-    snprintf(ffi_path, sizeof(ffi_path), "%s%s%s%s", LIBARY_DIR, PATH_SEP, clean_uri, FFI_EXT);
+    if (plugin_resolve_path(clean_uri, ffi_path, sizeof(ffi_path)) != 0) {
+        mg_http_reply(c, 404,
+            "Access-Control-Allow-Origin: *\r\n"
+            "Content-Type: application/json\r\n",
+            "{\"error\":404,\"message\":\"Plugin Not Found\"}");
+        return;
+    }
 
     char *json_in = build_json_in(hm);
 

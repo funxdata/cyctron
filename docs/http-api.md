@@ -28,8 +28,8 @@ Access-Control-Max-Age: 86400
 | POST | `/api/iceoryx` | 推送 iceoryx 类型事件 |
 | POST | `/api/log` | 推送 log 类型事件 |
 | GET/HEAD | 其它带后缀 URI | 静态文件（`web/`） |
-| 任意 | `/<name>` | 若 `./libary/<name>.<ext>` 存在 → libary 插件 |
-| 任意 | 其它 | 回退到 libary handler（找不到插件返回 404） |
+| 任意 | `/<name>` | 若 `./plugins/<name>/` 或 `./libary/<name>.<ext>` 存在 → 插件 |
+| 任意 | 其它 | 回退到插件 handler（找不到插件返回 404） |
 
 ## 2. 状态与推送 API
 
@@ -96,9 +96,9 @@ curl -X POST http://127.0.0.1:44944/api/iceoryx \
 - 含 `..` 的 URI 返回 400。
 - MIME 由 mongoose 内置表 + 额外映射（`svg`、`json`、`js`、`mjs`）处理。
 
-## 4. libary 插件
+## 4. 插件
 
-`/<name>` 对应 `./libary/<name>.<ext>`：
+`/<name>` 先找 `./plugins/<name>/<name>.<ext>`，找不到再回退 `./libary/<name>.<ext>`：
 
 - Windows：`.dll`
 - Linux：`.so`

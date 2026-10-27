@@ -81,7 +81,7 @@ ws://<host>:44944/soket
  "args":{"prompt":"你好"},"timeout_ms":120000}
 ```
 
-- `lib`：`libary/` 下的库名，仅允许 `[A-Za-z0-9_-]`。
+- `lib`：库名，仅允许 `[A-Za-z0-9_-]`；设计插件取 `plugins/<lib>/`，其余回退 `libary/`。
 - `symbol`：完整导出符号，如 `post_chat`（不是 HTTP 的短名）。
 - `args`：原样传给插件，缺省 `{}`。
 - `timeout_ms`：客户端超时提示；服务端目前不强制中断。

@@ -38,7 +38,7 @@ NNG 事件通道
 ```
 include/                 对外头文件
   config.h               编译期配置宏
-  global.h               平台路径（web/libary、扩展名）
+  global.h               平台路径（web/libary/plugins、扩展名）
   server.h               路由处理函数声明
   handler_ws.h           WebSocket 处理
   handler_sse.h          SSE 处理
@@ -50,7 +50,8 @@ src/
   main.c                 命令行入口、mongoose 主循环
   handler.c              HTTP/WS/SSE 总路由
   handler_static.c       静态文件
-  handler_libary.c       libary 插件调用
+  handler_libary.c       HTTP 插件调用
+  plugin_path.c          插件路径解析（plugins 优先、libary 回退）
   handler_ws.c           WebSocket 命令
   handler_sse.c          SSE 连接与事件
   calldyn.c              dlopen + libffi 调用（含句柄缓存）
@@ -76,7 +77,7 @@ crates/                  第三方子模块
   ▼
 ev_handler (handler.c)
   ├─ OPTIONS/WS/SSE/API 特殊路由
-  ├─ 探测 ./libary/<uri>.<ext> 是否存在
+  ├─ 探测 ./plugins/<uri>/ 或 ./libary/<uri>.<ext> 是否存在
   ▼
 ev_handler_libary (handler_libary.c)
   ├─ 路径遍历检查

@@ -46,6 +46,7 @@ ctest --test-dir build -R "^libary" --output-on-failure
 
 | 名称 | 文件 | 覆盖 |
 | --- | --- | --- |
+| `plugin_path` | `tests/test_plugin_path.c` | plugins 优先、目录扫描、libary 回退、非法名字 |
 | `libary` | `tests/test_libary.c` | libary_demo 全符号、边界、未知符号 |
 | `libary_stress` | `tests/test_libary_stress.c` | 串行 20000 + 8 线程混合 |
 | `sse` | `tests/test_sse.c` | SSE 格式化、sse_demo 调用、续传 |

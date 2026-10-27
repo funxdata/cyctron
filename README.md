@@ -12,7 +12,7 @@
 | 能力 | 端点 | 说明 |
 | --- | --- | --- |
 | HTTP API | `/api/*` | 状态查询、事件推送 |
-| libary 插件 | `/<name>` | 映射到 `./libary/<name>.<ext>`，按方法+`FFI-Symbol` 调符号 |
+| 插件路由 | `/<name>` | 设计插件优先 `./plugins/<name>/`，其余回退 `./libary/<name>.<ext>`，按方法+`FFI-Symbol` 调符号 |
 | 静态文件 | `/`、`/assets/*` | `web/` 目录，index.html 回退 |
 | WebSocket | `/soket` | 实时任务命令（bind/msg/status/remove） |
 | SSE | `/sse` | 服务器事件流，支持 `Last-Event-ID` 续传 |
@@ -80,6 +80,7 @@ src/core/       通用工具（URI）
 crates/         第三方子模块（mongoose、nng、libev、log、libffi）
 examples/       Rust 插件示例（rust_demo、soket_demo、libary_demo、sse_demo）
 tests/          C 单元/集成/压力测试
+plugins/        设计插件安装目录（运行时生成，不入库）
 ts/             Deno 接口测试与客户端示例
 todo/           模块设计与完成记录
 docs/           系统文档
@@ -93,7 +94,7 @@ docs/           系统文档
 | --- | --- |
 | [docs/architecture.md](./docs/architecture.md) | 架构、线程模型、请求/事件流 |
 | [docs/http-api.md](./docs/http-api.md) | HTTP 路由、API、静态文件、错误 |
-| [docs/libary.md](./docs/libary.md) | libary 插件协议与 C ABI |
+| [docs/libary.md](./docs/libary.md) | 插件协议（plugins/libary 路径、C ABI） |
 | [docs/sse.md](./docs/sse.md) | SSE 端点、事件格式、续传 |
 | [docs/websocket.md](./docs/websocket.md) | `/soket` 协议与命令 |
 | [docs/realtime-nng.md](./docs/realtime-nng.md) | realtime 任务与 NNG |

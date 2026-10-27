@@ -2,6 +2,7 @@
 #include "ws_worker.h"
 #include "ws_call.h"
 #include "calldyn.h"
+#include "plugin_path.h"
 #include "log.h"
 #include <pthread.h>
 #include <stdio.h>
@@ -145,11 +146,9 @@ static void *worker_loop(void *arg) {
             rc = -7;
         } else {
             char path[512];
-#ifdef _WIN32
-            snprintf(path, sizeof(path), "./libary/%s.dll", job->lib);
-#else
-            snprintf(path, sizeof(path), "./libary/%s.so", job->lib);
-#endif
+            /* 未找到时 plugin_resolve_path 仍写入 ./libary/<lib><ext> 候选路径，
+             * 交给执行器 dlopen，保持“库不存在 → rc=-1”的旧语义。 */
+            plugin_resolve_path(job->lib, path, sizeof(path));
             pthread_mutex_t *lock = &g_conn_locks[job->conn_id % WS_CONN_LOCKS];
             pthread_mutex_lock(lock);
             rc = g_exec ? g_exec(path, job->symbol, job->args, &out) : -1;

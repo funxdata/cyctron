@@ -52,6 +52,7 @@ set(CORE_SOURCES
     src/handler_static.c
     src/handler_utils.c
     src/handler_libary.c
+    src/plugin_path.c
     src/handler_ws.c
     src/handler_sse.c
     src/calldyn.c

@@ -5,8 +5,9 @@
 ```
 src/
   main.c            启动、命令行、主循环
-  handler.c         总路由（OPTIONS/WS/SSE/API/libary/static）
+  handler.c         总路由（OPTIONS/WS/SSE/API/插件/static）
   handler_libary.c  插件调用
+  plugin_path.c     插件路径解析（plugins 优先、libary 回退）
   handler_static.c  静态文件
   handler_ws.c      WebSocket 命令
   handler_sse.c     SSE
@@ -25,7 +26,7 @@ todo/               模块设计与完成记录
 
 1. 在 `include/server.h`（或新建头文件）声明处理函数。
 2. 在 `src/handler.c` 的 `MG_EV_HTTP_MSG` 中加分支，注意顺序：
-   - OPTIONS → WebSocket → SSE → `/api/*` → libary 探测 → 静态 → libary 兜底
+   - OPTIONS → WebSocket → SSE → `/api/*` → 插件探测 → 静态 → 插件兜底
 3. 在 `CMakeLists.txt` 的 `CORE_SOURCES` 中加入新源文件。
 4. 补充测试（C 或 TS）与文档。
 
@@ -41,7 +42,7 @@ if (hm->uri.len == 5 && strncmp(hm->uri.buf, "/ping", 5) == 0) {
 }
 ```
 
-## 3. 新增一个 libary 插件
+## 3. 新增一个插件
 
 1. 创建 Rust cdylib 工程：
 
@@ -76,7 +77,8 @@ pub extern "C" fn get_handle(json_in: *const c_char, json_out: *mut c_char) -> i
 
 ```bash
 cargo build --release --manifest-path examples/my_plugin/Cargo.toml
-cp examples/my_plugin/target/release/my_plugin.dll libary/   # Windows
+cp examples/my_plugin/target/release/my_plugin.dll libary/   # Windows（sys 库）
+cp examples/my_plugin/target/release/my_plugin.dll plugins/my_plugin/  # 设计插件
 ```
 
 4. 调用：`GET /my_plugin` → `get_handle`。
@@ -128,7 +130,7 @@ add_test(NAME xxx COMMAND test_xxx WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 | --- | --- |
 | `main` | 集成主线 |
 | `developer` | 历史开发线 |
-| `libary` | libary 插件与测试 |
+| `libary` | libary sys 系统库与测试 |
 | `socket` | soket 压力测试与实时通道优化 |
 | `sse` | SSE 端点与 `sse_demo` |
 

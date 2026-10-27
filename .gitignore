@@ -50,3 +50,6 @@ test-results/
 crates/criterion*
 crates/libffi
 crates/mongoose*
+
+# 设计插件安装目录（update/publish 生成，不入库）
+plugins/

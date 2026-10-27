@@ -1,18 +1,25 @@
-# libary 动态库插件
+# 动态库插件（plugins / libary）
 
-libary 是 cyctron 的核心扩展机制：HTTP 请求按 URI 映射到 `./libary/` 下的动态库，
-再通过 libffi 调用库导出的 C ABI 函数。
+插件是 cyctron 的核心扩展机制：HTTP 请求按 URI 映射到动态库，再通过 libffi
+调用库导出的 C ABI 函数。动态库有两类来源，按以下顺序解析：
+
+1. **设计插件**：`./plugins/<name>/<name>.<ext>`（安装目录，见
+   [design_plugins](https://github.com/dytescn/design_plugins) 与 `piksel_install`）；
+2. **sys 能力库**：`./libary/<name>.<ext>`（旧目录，继续兼容）。
+
+`./plugins/<name>/` 内优先找 `<name>.<ext>`、`lib<name>.<ext>`，都没有时取目录中
+第一个同扩展名的动态库（兼容导出文件名与包名不一致的插件）。
 
 ## 1. 目录与扩展名
 
-| 平台 | 目录 | 扩展名 |
-| --- | --- | --- |
-| Windows | `.\libary` | `.dll` |
-| Linux | `./libary` | `.so` |
-| macOS | `./libary` | `.dylib` |
+| 平台 | 设计插件目录 | sys 库目录 | 扩展名 |
+| --- | --- | --- | --- |
+| Windows | `.\plugins\<name>\` | `.\libary` | `.dll` |
+| Linux | `./plugins/<name>/` | `./libary` | `.so` |
+| macOS | `./plugins/<name>/` | `./libary` | `.dylib` |
 
-目录与扩展名由 `include/global.h` 定义。`./libary/` 已被 `.gitignore` 忽略，
-插件产物不入库。
+目录与扩展名由 `include/global.h` 定义，路径解析集中在 `src/plugin_path.c`。
+`./plugins/` 与 `./libary/` 都被 `.gitignore` 忽略，插件产物不入库。
 
 ## 2. URI 与符号映射
 
@@ -28,7 +35,7 @@ FFI-Symbol: add
 
 | 部分 | 规则 |
 | --- | --- |
-| 插件路径 | `./libary/` + URI 去掉前导 `/` + 平台扩展名 |
+| 插件路径 | `./plugins/<name>/<name><ext>` → 回退 `./libary/<name><ext>` |
 | 方法 | 转小写，作为前缀 |
 | 符号 | `<method>_<FFI-Symbol>`；`FFI-Symbol` 缺省为 `handle` |
 | 示例 | `POST` + `add` → `post_add` |
@@ -137,7 +144,7 @@ curl -X POST http://127.0.0.1:44944/libary_demo \
 1. 创建 Rust cdylib 工程（或 C/C++ 动态库）。
 2. 导出 `process_init` 或业务符号，签名为上述 C ABI。
 3. 编译为 `.so` / `.dll` / `.dylib`。
-4. 放到 `./libary/<name>.<ext>`。
+4. 放到 `./plugins/<name>/<name>.<ext>`（设计插件，推荐）或 `./libary/<name>.<ext>`（sys 库）。
 5. 通过 `/<name>` 调用。
 
 Rust 模板：

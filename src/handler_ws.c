@@ -23,23 +23,31 @@ pthread_mutex_t g_ws_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static rt_manager_t *g_rt_manager = NULL;
 
-#define WS_MAX_CONNS 8
+#define WS_MAX_CONNS 32
 static struct mg_connection *g_ws_conns[WS_MAX_CONNS];
 static pthread_mutex_t g_ws_conns_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static void ws_conn_register(struct mg_connection *c) {
+/* 注册 WS 连接；表满或连接已关闭时返回 0，由调用方关闭该连接。 */
+static int ws_conn_register(struct mg_connection *c) {
+    int ok = 0;
     pthread_mutex_lock(&g_ws_conns_mutex);
     for (int i = 0; i < WS_MAX_CONNS; i++) {
-        if (g_ws_conns[i] == c) {
-            pthread_mutex_unlock(&g_ws_conns_mutex);
-            return;
+        if (g_ws_conns[i] == c) { ok = 1; break; }
+        if (g_ws_conns[i] && g_ws_conns[i]->is_closing) g_ws_conns[i] = NULL;
+    }
+    if (!ok) {
+        for (int i = 0; i < WS_MAX_CONNS; i++) {
+            if (!g_ws_conns[i]) { g_ws_conns[i] = c; ok = 1; break; }
         }
     }
-    for (int i = 0; i < WS_MAX_CONNS; i++) {
-        if (!g_ws_conns[i]) { g_ws_conns[i] = c; break; }
-    }
     pthread_mutex_unlock(&g_ws_conns_mutex);
-    log_info("[WS] register conn=%lu", c->id);
+    if (ok) {
+        log_info("[WS] register conn=%lu", c->id);
+    } else {
+        log_warn("[WS] connection table full (%d), reject conn=%lu",
+                 WS_MAX_CONNS, c->id);
+    }
+    return ok;
 }
 
 static void ws_conn_unregister(struct mg_connection *c) {
@@ -183,6 +191,10 @@ static struct mg_connection *ws_conn_find(unsigned long conn_id) {
     struct mg_connection *found = NULL;
     pthread_mutex_lock(&g_ws_conns_mutex);
     for (int i = 0; i < WS_MAX_CONNS; i++) {
+        if (g_ws_conns[i] && g_ws_conns[i]->is_closing) {
+            g_ws_conns[i] = NULL;
+            continue;
+        }
         if (g_ws_conns[i] && g_ws_conns[i]->id == conn_id) {
             found = g_ws_conns[i];
             break;
@@ -267,7 +279,10 @@ static void handle_ws_message(struct mg_connection *c, const char *data, size_t 
 }
 
 void ws_on_upgrade(struct mg_connection *c) {
-    ws_conn_register(c);
+    if (!ws_conn_register(c)) {
+        c->is_draining = 1;
+        return;
+    }
 
     pthread_mutex_lock(&g_ws_mutex);
     g_ws_conn = c;
@@ -286,16 +301,27 @@ void ws_on_upgrade(struct mg_connection *c) {
 void ws_ev_handler(struct mg_connection *c, int ev, void *ev_data) {
     switch (ev) {
         case MG_EV_WS_OPEN: {
+            if (!ws_conn_register(c)) {
+                c->is_draining = 1;
+                break;
+            }
             pthread_mutex_lock(&g_ws_mutex);
             g_ws_conn = c;
             pthread_mutex_unlock(&g_ws_mutex);
-            ws_conn_register(c);
 
             log_info("[WS] Connected");
             if (!g_rt_manager) g_rt_manager = rt_init();
             
             event_push_with_type_to(c, "system", "{\"status\":\"online\"}");
             event_push_message_to(c, "WebSocket client connected");
+            break;
+        }
+
+        case MG_EV_WS_CTL: {
+            struct mg_ws_message *ctl = (struct mg_ws_message *) ev_data;
+            if (ctl && (ctl->flags & 0x0f) == WEBSOCKET_OP_CLOSE) {
+                ws_conn_unregister(c);
+            }
             break;
         }
 

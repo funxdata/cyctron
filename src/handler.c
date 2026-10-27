@@ -9,6 +9,7 @@
 #include "global.h"
 #include "handler_ws.h"
 #include "handler_sse.h"
+#include "plugin_path.h"
 
 extern struct mg_connection *g_ws_conn;
 extern pthread_mutex_t g_ws_mutex;
@@ -119,8 +120,8 @@ void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
                 }
             }
             
-            // ====== libary 插件路由（任意方法，含 GET/HEAD） ======
-            // URI 对应 ./libary/<name>.so 存在时优先交给 libary handler
+            // ====== 插件路由（任意方法，含 GET/HEAD） ======
+            // 设计插件优先 ./plugins/<name>/<name>.dll，其次 ./libary/<name>.dll
             {
                 char probe[512];
                 size_t plen = hm->uri.len < sizeof(probe) - 1 ? hm->uri.len : sizeof(probe) - 1;
@@ -132,10 +133,7 @@ void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
                 const char *clean = probe[0] == '/' ? probe + 1 : probe;
                 if (*clean && !uri_has_traversal(probe)) {
                     char lib_path[600];
-                    snprintf(lib_path, sizeof(lib_path), "%s%s%s%s",
-                             LIBARY_DIR, PATH_SEP, clean, FFI_EXT);
-                    struct stat st;
-                    if (stat(lib_path, &st) == 0) {
+                    if (plugin_resolve_path(clean, lib_path, sizeof(lib_path)) == 0) {
                         event_push_with_type("libary", "{\"operation\":\"library_call\"}");
                         ev_handler_libary(c, ev, ev_data);
                         return;

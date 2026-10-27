@@ -48,7 +48,7 @@ else()
 endif()
 
 add_executable(test_sse test_sse.c
-    ../src/handler_sse.c ../src/calldyn.c
+    ../src/handler_sse.c ../src/calldyn.c ../src/plugin_path.c
     ../crates/mongoose/mongoose.c ../crates/log/src/log.c)
 target_include_directories(test_sse PRIVATE
     ../include ../crates/mongoose ../crates/log/src ${FFI_INCLUDE_DIRS})
@@ -151,9 +151,17 @@ target_include_directories(test_realtime_ownership PRIVATE
 target_link_libraries(test_realtime_ownership PRIVATE nng ${PLATFORM_LIBS})
 add_test(NAME realtime_ownership COMMAND test_realtime_ownership)
 
+# ---------- plugin path resolution: plugins 优先、libary 回退 ----------
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/plugin_path_fixture)
+add_executable(test_plugin_path test_plugin_path.c ../src/plugin_path.c)
+target_include_directories(test_plugin_path PRIVATE ../include)
+target_link_libraries(test_plugin_path PRIVATE ${PLATFORM_LIBS})
+add_test(NAME plugin_path COMMAND test_plugin_path
+         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/plugin_path_fixture)
+
 # ---------- WebSocket worker ----------
 add_executable(test_ws_worker test_ws_worker.c
-    ../src/ws_worker.c ../src/ws_call.c
+    ../src/ws_worker.c ../src/ws_call.c ../src/plugin_path.c
     ../crates/mongoose/mongoose.c ../crates/log/src/log.c)
 target_include_directories(test_ws_worker PRIVATE
     ../include ../crates/mongoose ../crates/log/src)

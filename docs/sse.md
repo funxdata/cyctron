@@ -15,14 +15,14 @@ Last-Event-ID: <可选>
 | --- | --- | --- |
 | `interval_ms` | 200 | 拉取间隔，限制 50–5000 ms |
 | `Last-Event-ID` | 0 | 断线重连时从该 id 之后继续 |
-| `lib` | `sse_demo` | 要调用的插件名（对应 `./libary/<lib>.<ext>`） |
+| `lib` | `sse_demo` | 要调用的插件名（`./plugins/<lib>/` 优先，回退 `./libary/<lib>.<ext>`） |
 | `symbol` | `sse_next` | 插件导出符号 |
 | `args` | 空 | 传给符号的 JSON（URL 编码） |
 | `once` | 0 | `1` 表示只调用一次；弹窗类接口必须设置，避免反复弹窗 |
 
 ### 1.1 通用插件调用
 
-除默认的 `sse_demo` / `sse_next` 外，可以指定任意 libary 插件和符号：
+除默认的 `sse_demo` / `sse_next` 外，可以指定任意插件和符号：
 
 ```
 GET /sse?lib=sys_info&symbol=post_cur_dir&interval_ms=1000

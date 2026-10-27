@@ -8,7 +8,7 @@
 | --- | --- |
 | [architecture.md](./architecture.md) | 总体架构、线程模型、请求/事件数据流 |
 | [http-api.md](./http-api.md) | HTTP 路由、API、静态文件、CORS 与错误格式 |
-| [libary.md](./libary.md) | libary 动态库插件协议（URI、FFI-Symbol、C ABI） |
+| [libary.md](./libary.md) | 动态库插件协议（plugins/libary 路径、URI、FFI-Symbol、C ABI） |
 | [sse.md](./sse.md) | SSE 事件流端点、事件格式、重连与 `sse_demo` |
 | [websocket.md](./websocket.md) | `/soket` WebSocket 协议与命令 |
 | [realtime-nng.md](./realtime-nng.md) | realtime 任务调度与 NNG IPC 通道 |

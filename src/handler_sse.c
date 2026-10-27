@@ -3,7 +3,8 @@
 // 支持两种事件源：
 //   1. 默认：./libary/sse_demo.<ext> 的 sse_next，输出 {"id","event","data"}
 //   2. 通用：GET /sse?lib=<name>&symbol=<fn>&args=<json>
-//      周期调用 ./libary/<name>.<ext> 的 <fn>，把返回 JSON 原样作为 data
+//      周期调用插件 <fn>（设计插件取 ./plugins/<name>/，其余回退 ./libary/），
+//      把返回 JSON 原样作为 data
 //
 // 所有发送都在 mongoose 主循环线程内完成（MG_EV_POLL）。
 #include <stdio.h>
@@ -17,6 +18,7 @@
 #include "global.h"
 #include "calldyn.h"
 #include "handler_sse.h"
+#include "plugin_path.h"
 
 #define SSE_DEFAULT_INTERVAL_MS 200
 #define SSE_MIN_INTERVAL_MS 50
@@ -58,7 +60,10 @@ static int sse_safe_name(const char *s) {
 }
 
 static void sse_lib_path(const char *lib, char *out, size_t out_size) {
-    snprintf(out, out_size, "%s%s%s%s", LIBARY_DIR, PATH_SEP, lib, FFI_EXT);
+    // 设计插件优先 ./plugins/<name>/，sys 能力库回退 ./libary/
+    if (plugin_resolve_path(lib, out, out_size) != 0) {
+        snprintf(out, out_size, "%s%s%s%s", LIBARY_DIR, PATH_SEP, lib, FFI_EXT);
+    }
 }
 
 static void sse_plugin_path(char *out, size_t out_size) {

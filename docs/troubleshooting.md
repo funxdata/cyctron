@@ -18,13 +18,13 @@ Error starting HTTP+WS server on http://0.0.0.0:44944
 - 检查 `event_pusher_init` 日志；NNG 监听失败只记录错误，不会阻止 HTTP 启动。
 - Windows Release 使用 `-mwindows`，无控制台；用 Debug 构建或在命令行观察日志。
 
-## 2. libary 插件
+## 2. 插件
 
 ### 返回 404 `Plugin Not Found`
 
 按顺序检查：
 
-1. 文件是否存在：`./libary/<uri>.<dll|so|dylib>`。
+1. 文件是否存在：`./plugins/<uri>/<uri>.<dll|so|dylib>` 或 `./libary/<uri>.<dll|so|dylib>`。
 2. 扩展名是否与平台一致（Windows `.dll`）。
 3. 符号是否存在：`<小写 method>_<FFI-Symbol>`。
    - `POST /libary_demo` + `FFI-Symbol: add` → `post_add`

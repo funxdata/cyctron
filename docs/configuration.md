@@ -28,7 +28,8 @@
 | 目录 | 用途 | 是否入库 |
 | --- | --- | --- |
 | `web/` | 静态文件根目录 | 否（`.gitignore`） |
-| `libary/` | 插件动态库 | 否 |
+| `libary/` | sys 能力库动态库 | 否 |
+| `plugins/` | 设计插件安装目录（`plugins/<name>/`） | 否 |
 | `core/` | soket 插件（`libsoket_demo`） | 否 |
 | `test-results/` | 压力测试结果 | 否 |
 | `build*/` | 构建目录 | 否 |
@@ -45,6 +46,7 @@
 | `PATH_SEP` | `\` | `/` | `/` |
 | `WEB_ROOT` | `.\web` | `./web` | `./web` |
 | `LIBARY_DIR` | `.\libary` | `./libary` | `./libary` |
+| `PLUGINS_DIR` | `.\plugins` | `./plugins` | `./plugins` |
 | `FFI_EXT` | `.dll` | `.so` | `.dylib` |
 
 ## 5. 编译宏（include/config.h）
