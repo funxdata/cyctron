@@ -23,7 +23,7 @@
 #define TIME_UTC 1
 #endif
 
-static inline int timespec_get(struct timespec *ts, int base) {
+static inline int nng_timespec_get(struct timespec *ts, int base) {
     if (base != TIME_UTC) return 0;
     
     FILETIME ft;
@@ -42,6 +42,10 @@ static inline int timespec_get(struct timespec *ts, int base) {
     
     return TIME_UTC;
 }
+
+// 新版 mingw-w64 已在 <time.h> 中声明 timespec_get，直接定义会类型冲突；
+// 统一重定向到内部实现，既兼容新头文件，也保证 Windows 7 上仍有实现。
+#define timespec_get(ts, base) nng_timespec_get((ts), (base))
 #endif // __MINGW32__
 
 nni_time
