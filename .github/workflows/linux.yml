@@ -50,7 +50,7 @@ jobs:
       - name: Prepare upload directory
         run: |
           mkdir -p upload
-          cp build/cyctron upload/
+          cp cyctron upload/
 
       - name: Upload to UpYun S3
         uses: shallwefootball/s3-upload-action@master

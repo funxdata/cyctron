@@ -55,7 +55,7 @@ jobs:
       - name: Prepare upload directory
         run: |
           mkdir upload
-          copy build\cyctron.exe upload\
+          copy cyctron.exe upload\
 
       # ========================
       # Upload to UpYun S3
