@@ -49,7 +49,10 @@ test-results/
 # 第三方子模块/未初始化目录：由 .gitmodules 管理，不提交其内部改动
 crates/criterion*
 crates/libffi
-crates/mongoose*
+# mongoose 只提交构建所需源码，其余本地文件不入库
+crates/mongoose/*
+!crates/mongoose/mongoose.c
+!crates/mongoose/mongoose.h
 
 # 设计插件安装目录（update/publish 生成，不入库）
 plugins/

@@ -1,6 +1,7 @@
 {
   "name": "cyctron",
-  "version": "1.0.13",
+  "uuid": "a3d837fd-da48-469a-8c1a-6424402e24d8",
+  "version": "1.0.14",
   "description": "local http server",
   "keywords": [
     "cyctron",

@@ -8,6 +8,34 @@
 
 #define INDEX_HTML "index.html"
 
+// 内置首页：安装目录不再需要 web/index.html。
+// 依次加载 pages 的模板引擎、路由与 init 入口，保持与页面同源。
+static const char *INDEX_HTML_CONTENT =
+    "<!DOCTYPE html>\n"
+    "<html lang=\"zh-cn\">\n"
+    "<head>\n"
+    "  <meta charset=\"UTF-8\">\n"
+    "  <meta name=\"viewport\" content=\"width=device-width,minimum-scale=1,maximum-scale=1,initial-scale=1,user-scalable=no\">\n"
+    "  <link rel=\"icon\" href=\"https://book.funxdata.com/public/funxdata.ico\">\n"
+    "  <title>Piksel</title>\n"
+    "</head>\n"
+    "<body>\n"
+    "  <div id=\"asides\" class=\"vg-asides\"></div>\n"
+    "  <div id=\"app\"></div>\n"
+    "  <div id=\"popup\"></div>\n"
+    "  <script type=\"module\" src=\"/pages/browser.js\"></script>\n"
+    "  <script type=\"module\" src=\"/pages/router.js\"></script>\n"
+    "  <script type=\"module\" src=\"/init/init.js\"></script>\n"
+    "</body>\n"
+    "</html>\n";
+
+static void reply_index_html(struct mg_connection *c) {
+    mg_http_reply(c, 200,
+        "Content-Type: text/html; charset=utf-8\r\n"
+        "Cache-Control: no-cache\r\n",
+        "%s", INDEX_HTML_CONTENT);
+}
+
 // 解析静态文件请求 URI 到磁盘相对路径（导出供单元测试）
 // 规则：含 ".." 拒绝；无后缀 → index.html；带后缀 → 原样映射
 // 返回 0 成功，-1 表示非法请求
@@ -69,17 +97,16 @@ void ev_handler_static(struct mg_connection *c, int ev, void *ev_data) {
         return;
     }
 
-    // SPA fallback：页面路由（/chat 等）对应的 index.html 不存在时，
-    // 回退到 web/index.html，由前端 init 从 URL 恢复路由。
-    if (static_should_fallback(uri) &&
-        strcmp(file_path, WEB_ROOT "/" INDEX_HTML) != 0) {
-        FILE *fp = fopen(file_path, "rb");
-        if (!fp) {
-            snprintf(file_path, sizeof(file_path), "%s/%s", WEB_ROOT, INDEX_HTML);
-            log_debug("[Static] SPA fallback: %s -> %s", uri, file_path);
-        } else {
-            fclose(fp);
-        }
+    // 首页与 SPA fallback 统一返回内置 HTML，不再依赖 web/index.html 文件。
+    // 页面路由（/chat 等）交给前端 init 从 URL 恢复。
+    if (strcmp(file_path, WEB_ROOT "/" INDEX_HTML) == 0) {
+        reply_index_html(c);
+        return;
+    }
+    if (static_should_fallback(uri)) {
+        log_debug("[Static] SPA fallback: %s -> builtin index", uri);
+        reply_index_html(c);
+        return;
     }
 
     log_debug("[Static] %s -> %s", uri, file_path);
@@ -89,8 +116,5 @@ void ev_handler_static(struct mg_connection *c, int ev, void *ev_data) {
     opts.mime_types = "svg=image/svg+xml,json=application/json,"
                       "js=text/javascript,mjs=text/javascript";
     opts.fs = &mg_fs_posix;
-    if (strcmp(file_path, WEB_ROOT "/" INDEX_HTML) == 0) {
-        opts.extra_headers = "Cache-Control: no-cache\r\n";
-    }
     mg_http_serve_file(c, hm, file_path, &opts);
 }
