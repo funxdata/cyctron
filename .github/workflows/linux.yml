@@ -45,7 +45,7 @@ jobs:
       - name: Run tests
         run: |
           cd build
-          ./cyctron_tests
+          ctest --output-on-failure -R "^(static|ws_call|ws_call_parse|ws_call_errors|ws_call_response|event_push_dynamic|ws_message_limit|static_spa|ws_parse_legacy|plugin_path|ws_worker)$"
 
       - name: Prepare upload directory
         run: |
