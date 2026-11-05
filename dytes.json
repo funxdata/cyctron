@@ -1,7 +1,7 @@
 {
   "name": "cyctron",
   "uuid": "a3d837fd-da48-469a-8c1a-6424402e24d8",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "description": "local http server",
   "keywords": [
     "cyctron",
@@ -10,7 +10,15 @@
   "author": "funxdata",
   "type": "core",
   "license": "MIT",
-  "exports": {
-    "./cyctron.exe": "cyctron.exe"
+  "platform-exports": {
+    "windows": {
+      "./cyctron.exe": "cyctron.exe"
+    },
+    "linux": {
+      "./cyctron": "cyctron"
+    },
+    "macos": {
+      "./cyctron": "cyctron"
+    }
   }
 }

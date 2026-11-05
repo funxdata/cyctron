@@ -106,6 +106,12 @@ int plugin_resolve_path(const char *name, char *out, size_t out_size) {
         }
     }
 
+    // libary 回退：先按 <name><ext>，再按 lib<name><ext>。
+    // Linux 上的 designdb 等库按约定安装为 lib<name>.so，
+    // 只尝试 <name><ext> 会导致对应路由找不到库。
     snprintf(out, out_size, "%s%s%s%s", LIBARY_DIR, PATH_SEP, name, FFI_EXT);
+    if (file_exists(out)) return 0;
+
+    snprintf(out, out_size, "%s%slib%s%s", LIBARY_DIR, PATH_SEP, name, FFI_EXT);
     return file_exists(out) ? 0 : -1;
 }
