@@ -1,7 +1,7 @@
 {
   "name": "cyctron",
   "uuid": "a3d837fd-da48-469a-8c1a-6424402e24d8",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "description": "local http server",
   "keywords": [
     "cyctron",
@@ -15,10 +15,10 @@
       "./cyctron.exe": "cyctron.exe"
     },
     "linux": {
-      "./cyctron": "cyctron"
+      "./cyctron": "cyctron.bin"
     },
     "macos": {
-      "./cyctron": "cyctron"
+      "./cyctron": "cyctron.app"
     }
   }
 }
