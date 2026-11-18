@@ -15,14 +15,16 @@ Last-Event-ID: <可选>
 | --- | --- | --- |
 | `interval_ms` | 200 | 拉取间隔，限制 50–5000 ms |
 | `Last-Event-ID` | 0 | 断线重连时从该 id 之后继续 |
-| `lib` | `sse_demo` | 要调用的插件名（`./plugins/<lib>/` 优先，回退 `./libary/<lib>.<ext>`） |
-| `symbol` | `sse_next` | 插件导出符号 |
+| `lib` | `sse_demo` | 要调用的插件名（从 `./libary/<lib>.<ext>` 加载） |
+| `symbol` | `sse_next_v2` | 插件导出符号 |
 | `args` | 空 | 传给符号的 JSON（URL 编码） |
 | `once` | 0 | `1` 表示只调用一次；弹窗类接口必须设置，避免反复弹窗 |
 
 ### 1.1 通用插件调用
 
-除默认的 `sse_demo` / `sse_next` 外，可以指定任意插件和符号：
+除默认的 `sse_demo` / `sse_next_v2` 外，可以指定任意插件和符号：
+
+> 通用模式把 `symbol` 原样传给插件，当前仍使用旧 2 参数 ABI；默认 `sse_demo` 使用 ABI v2。
 
 ```
 GET /sse?lib=sys_info&symbol=post_cur_dir&interval_ms=1000
@@ -79,16 +81,16 @@ es.onmessage = (e) => { /* ... */ };
 
 ## 4. 插件协议
 
-插件文件：`./libary/sse_demo.<ext>`（Windows `.dll`）。
+插件文件：`libary/sse_demo.<ext>`（本地测试为 `.dytes/libary/sse_demo.<ext>`；Windows `.dll`）。
 
 | 符号 | 入参 | 输出 |
 | --- | --- | --- |
 | `process_init` | `{"config":{"interval_ms":200,"event":"tick"}}` | `{"ok":true,"interval_ms":200,"event":"tick"}` |
-| `sse_next` | `{"after_id":N}` | `{"id":N+1,"event":"tick","data":{...}}` |
+| `sse_next_v2` | `{"after_id":N}` | `{"id":N+1,"event":"tick","data":{...}}` |
 | `sse_status` | `{}` | `{"ok":true,"seq":N,...}` |
 | `sse_reset` | `{}` | `{"ok":true,"seq":0}` |
 
-C 端只调用 `sse_next`，并从输出中取 `id`、`event`、`data`。
+C 端默认调用 `sse_next_v2`（ABI v2），并从输出中取 `id`、`event`、`data`。
 
 输出约束：
 
@@ -157,8 +159,8 @@ const reader = res.body!.getReader();
 # C 单元测试
 ctest --test-dir build -R "^sse$" --output-on-failure
 
-# 接口测试（先启动服务）
-./cyctron start
+# 接口测试（先在 .dytes 启动服务）
+cd .dytes && ./cyctron.exe start
 deno run --allow-net ts/sse_request.ts 44944
 deno run --allow-net --allow-read --allow-write ts/sse_dir.ts 44944
 deno run --allow-net ts/sse_file.ts 44944

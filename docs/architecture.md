@@ -30,34 +30,35 @@ NNG 事件通道
 关键约束：
 
 - mongoose 连接对象只能在主线程操作；HTTP/SSE/WS 的发送都在主线程完成。
-- 插件调用是同步 FFI：调用期间会阻塞主线程，插件实现应避免长时间占用。
-- 当前 WebSocket 只维护一个客户端连接（`g_ws_conn`），多客户端会互相覆盖。
+- 插件调用是同步 FFI：HTTP 路径在主线程执行，WebSocket `call` 在 worker 线程执行。
+- 当前最多维护 32 个 WebSocket 连接；全局事件推送到最近连接的 `g_ws_conn`。
 
 ## 3. 目录与模块
 
 ```
 include/                 对外头文件
-  config.h               编译期配置宏
-  global.h               平台路径（web/libary/plugins、扩展名）
+  global.h               平台路径（web/libary、扩展名）
   server.h               路由处理函数声明
   handler_ws.h           WebSocket 处理
   handler_sse.h          SSE 处理
   realtime.h             任务调度 API
   event_pusher.h         事件推送 API
   calldyn.h              动态库调用 API
+  json_validate.h        JSON 结构校验
 
 src/
   main.c                 命令行入口、mongoose 主循环
   handler.c              HTTP/WS/SSE 总路由
   handler_static.c       静态文件
   handler_libary.c       HTTP 插件调用
-  plugin_path.c          插件路径解析（plugins 优先、libary 回退）
+  plugin_path.c          插件路径解析（仅 libary）
   handler_ws.c           WebSocket 命令
   handler_sse.c          SSE 连接与事件
   calldyn.c              dlopen + libffi 调用（含句柄缓存）
   event_pusher.c         WS + NNG 事件推送
   realtime.c             任务表与 NNG PUB
   core/uri.c             URI 扩展名判断
+  core/json_validate.c   JSON 结构校验
 
 crates/                  第三方子模块
   mongoose/              HTTP/WS/JSON/工具
@@ -76,18 +77,18 @@ crates/                  第三方子模块
   │ POST /libary_demo  (Content-Type: application/libary, FFI-Symbol: add)
   ▼
 ev_handler (handler.c)
-  ├─ OPTIONS/WS/SSE/API 特殊路由
-  ├─ 探测 ./plugins/<uri>/ 或 ./libary/<uri>.<ext> 是否存在
+  ├─ OPTIONS/WS/SSE 特殊路由
+  ├─ 探测 ./libary/<uri>.<ext> 是否存在
   ▼
 ev_handler_libary (handler_libary.c)
   ├─ 路径遍历检查
   ├─ 组装 json_in（query 或 body）
-  ├─ 符号名 = <小写 method>_<FFI-Symbol|handle>
+  ├─ 符号名 = <小写 method>_<FFI-Symbol|test>
   ▼
 call_local_dyn_libffi (calldyn.c)
   ├─ dlopen（句柄缓存）
-  ├─ libffi 调用 int fn(const char *in, char *out)
-  └─ 输出缓冲 64KB
+  ├─ libffi 调用 int fn(in, in_len, out, out_cap, out_len)
+  └─ 输出缓冲 1MB
   ▼
 JSON 响应（200 或 404 Plugin Not Found）
 ```
@@ -103,7 +104,7 @@ ev_handler_sse
   └─ 注册连接（最多 32）
   ▼
 MG_EV_POLL（每 50ms）
-  ├─ 每 interval_ms 调 sse_next 拉取事件
+  ├─ 每 interval_ms 调 sse_next_v2 拉取事件
   ├─ 发送 id/event/data
   └─ 每 15s 发送 ": ping"
 ```
@@ -137,11 +138,10 @@ realtime.c
 
 ## 6. 已知限制
 
-- WebSocket 单连接、断开时清理全部 realtime 任务。
-- `rt_run`（心跳/超时）尚未接入主循环。
+- WebSocket 最多 32 个连接；全局事件推送到最近一个 `g_ws_conn`，连接关闭只清理该连接的任务。
+- `rt_run` 保留空实现；心跳/超时循环当前未启用。
 - PUB/SUB 为尽力而为语义；高突发流量下可能丢消息。
-- 插件调用在主线程同步执行，慢插件会阻塞其他请求。
-- `handler_ws.c` 的 JSON 提取是字符串匹配，不支持空格/转义/嵌套。
-- `stop`/`reload` 子命令仍是 TODO。
+- HTTP 插件调用在主线程同步执行，慢插件会阻塞其他请求；WebSocket `call` 由 worker 线程执行。
+- `stop` 通过启动目录的 `cyctron.pid` 终止进程；`reload` 不支持（没有配置文件）。
 
-更完整的优化计划见 `todo/socket.md`（`socket` 分支）。
+优化计划见 `todo/socket.md`。

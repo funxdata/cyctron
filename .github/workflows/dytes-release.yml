@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # 与本地 dytes CLI 对齐；升级时同步修改
+  DYTES_VERSION: v0.2.3
+
 jobs:
   prepare:
     name: Prepare
@@ -19,6 +23,7 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+
       - id: meta
         shell: bash
         run: |
@@ -54,40 +59,83 @@ jobs:
         with:
           submodules: recursive
 
+      # ---------- 依赖 ----------
+      - name: Install build deps (Windows / MinGW)
+        if: needs.prepare.outputs.build == 'cmake' && matrix.platform == 'windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+
+      - name: Install build deps (Linux)
+        if: needs.prepare.outputs.build == 'cmake' && matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc pkg-config libffi-dev
+
+      - name: Install build deps (macOS)
+        if: needs.prepare.outputs.build == 'cmake' && matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install cmake ninja pkg-config libffi
+
       - name: Setup Rust
         if: needs.prepare.outputs.build == 'cargo'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install CMake dependencies (Windows)
+      # ---------- 构建 ----------
+      - name: Build (cmake / Windows)
         if: needs.prepare.outputs.build == 'cmake' && matrix.platform == 'windows'
-        shell: pwsh
-        run: choco install -y cmake ninja
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build build
 
-      - name: Install CMake dependencies (Unix)
+      - name: Build (cmake / Unix)
         if: needs.prepare.outputs.build == 'cmake' && matrix.platform != 'windows'
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ matrix.platform }}" = "linux" ]; then
-            sudo apt-get update
-            sudo apt-get install -y cmake ninja-build pkg-config
-          else
-            brew install cmake ninja pkg-config
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            export PKG_CONFIG_PATH="$(brew --prefix libffi)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build build
 
       - name: Build (cargo)
         if: needs.prepare.outputs.build == 'cargo'
         shell: bash
         run: cargo build --release
 
-      - name: Build (cmake)
-        if: needs.prepare.outputs.build == 'cmake'
-        shell: bash
-        run: |
-          cmake -S . -B build -G Ninja -DBUILD_TESTS=OFF
-          cmake --build build --config Release
-
+      # ---------- 发布 ----------
+      # dytes Action 只提供 Linux 无 GUI 版本，多平台发布需在各自 runner
+      # 下载对应平台的 dytes 发布资产后直接执行 publish。
       - name: Publish with dytes
-        uses: dytescn/dytes@v0.1.23
-        with:
-          command: publish
+        shell: bash
+        env:
+          DYTES_S3_ENDPOINT: ${{ secrets.UPYUN_ENDPOINT }}
+          DYTES_S3_BUCKET: ${{ secrets.UPYUN_BUCKET }}
+          DYTES_S3_ACCESS_KEY: ${{ secrets.UPYUN_API_KEY }}
+          DYTES_S3_SECRET_KEY: ${{ secrets.UPYUN_API_SECRET }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.platform }}" in
+            windows) asset="dytes-windows.exe"; bin="dytes.exe" ;;
+            linux)   asset="dytes-linux.bin";   bin="dytes" ;;
+            macos)   asset="dytes-macos.app";   bin="dytes" ;;
+            *) echo "::error::未知平台 ${{ matrix.platform }}"; exit 1 ;;
+          esac
+          url="https://github.com/dytescn/dytes/releases/download/${DYTES_VERSION}/${asset}"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+            "${url}" -o "${RUNNER_TEMP}/${bin}"
+          chmod +x "${RUNNER_TEMP}/${bin}"
+          "${RUNNER_TEMP}/${bin}" --version
+          "${RUNNER_TEMP}/${bin}" publish --platform "${{ matrix.platform }}"

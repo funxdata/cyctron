@@ -1,6 +1,15 @@
-// libary_demo - cyctron libary 目录动态库示例
-// C ABI: int <method>_handle(const char *json_in, char *json_out)
-// 输出缓冲约定 64KB（与 calldyn.c PLUGIN_JSON_BUF_SIZE 一致），输出为紧凑 JSON。
+// libary_demo - cyctron libary 目录动态库示例（插件 ABI v2）
+//
+// C ABI:
+//   int fn(const char *json_in, size_t json_in_len,
+//          char *json_out, size_t json_out_cap, size_t *json_out_len)
+//
+// HTTP 方法小写后与 _test_v2 拼接：
+//   GET → get_test_v2、POST → post_test_v2、PATCH → patch_test_v2、
+//   UPDATE → update_test_v2、PUT → put_test_v2、DELETE → delete_test_v2。
+//
+// 成功返回 0，*json_out_len 为写入的 JSON 字节数（不含结尾 NUL）；
+// 输出不足返回 -1001（ENOSPC），*json_out_len 为所需字节数。
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -10,7 +19,7 @@ use std::ptr;
 use std::sync::OnceLock;
 use std::sync::RwLock;
 
-const OUT_BUF_SIZE: usize = 65536;
+const ENOSPC: c_int = -1001;
 
 // 全局资源存储：id -> item 索引（避免大表线性扫描），
 // 进程内常驻（依赖 C 端 dlopen 句柄缓存）
@@ -29,44 +38,54 @@ fn items() -> &'static RwLock<ItemMap> {
 
 static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(4);
 
-// 解析输入：NULL/空串/非法 JSON 一律视为 Value::Null（无参数）
-fn parse_in(json_in: *const c_char) -> Value {
-    if json_in.is_null() {
+// 解析输入：NULL/空串/非法 JSON 一律视为 Value::Null（无参数）。
+// 使用宿主传入的长度，不依赖输入以 NUL 结尾。
+fn parse_in(json_in: *const c_char, json_in_len: usize) -> Value {
+    if json_in.is_null() || json_in_len == 0 {
         return Value::Null;
     }
-    let s = unsafe { std::ffi::CStr::from_ptr(json_in) }.to_string_lossy();
-    let s = s.trim();
+    let bytes = unsafe { std::slice::from_raw_parts(json_in as *const u8, json_in_len) };
+    let s = std::str::from_utf8(bytes).unwrap_or("").trim();
     if s.is_empty() {
         return Value::Null;
     }
     serde_json::from_str(s).unwrap_or(Value::Null)
 }
 
-fn write_out(json_out: *mut c_char, v: &Value) -> c_int {
-    if json_out.is_null() {
-        return -1;
-    }
-    let s = v.to_string();
-    write_out_str(json_out, &s)
+fn write_out(json_out: *mut c_char, cap: usize, out_len: *mut usize, v: &Value) -> c_int {
+    write_out_str(json_out, cap, out_len, &v.to_string())
 }
 
-fn write_out_str(json_out: *mut c_char, s: &str) -> c_int {
+fn write_out_str(json_out: *mut c_char, cap: usize, out_len: *mut usize, s: &str) -> c_int {
+    if out_len.is_null() {
+        return -1;
+    }
+    unsafe {
+        *out_len = s.len();
+    }
     if json_out.is_null() {
         return -1;
     }
-    let bytes = s.as_bytes();
-    let n = bytes.len().min(OUT_BUF_SIZE - 1);
+    if s.len() + 1 > cap {
+        return ENOSPC;
+    }
     unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), json_out as *mut u8, n);
-        *json_out.add(n) = 0;
+        ptr::copy_nonoverlapping(s.as_ptr(), json_out as *mut u8, s.len());
+        *json_out.add(s.len()) = 0;
     }
     0
 }
 
 // ---------------- GET：无参数 → 全部资源；带 id → 单个资源 ----------------
 #[no_mangle]
-pub extern "C" fn get_handle(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    let input = parse_in(json_in);
+pub extern "C" fn get_test_v2(
+    json_in: *const c_char,
+    json_in_len: usize,
+    json_out: *mut c_char,
+    json_out_cap: usize,
+    json_out_len: *mut usize,
+) -> c_int {
+    let input = parse_in(json_in, json_in_len);
     let guard = items().read().unwrap();
 
     if input.is_null() {
@@ -82,7 +101,7 @@ pub extern "C" fn get_handle(json_in: *const c_char, json_out: *mut c_char) -> c
             s.push_str(&it.to_string());
         }
         s.push_str(&format!("],\"count\":{}}}}}", guard.len()));
-        return write_out_str(json_out, &s);
+        return write_out_str(json_out, json_out_cap, json_out_len, &s);
     }
 
     let params = input.as_object().cloned().unwrap_or_default();
@@ -95,7 +114,7 @@ pub extern "C" fn get_handle(json_in: *const c_char, json_out: *mut c_char) -> c
                     "params": {"id": id},
                     "data": item,
                 });
-                write_out(json_out, &resp)
+                write_out(json_out, json_out_cap, json_out_len, &resp)
             }
             None => {
                 let resp = json!({
@@ -104,7 +123,7 @@ pub extern "C" fn get_handle(json_in: *const c_char, json_out: *mut c_char) -> c
                     "error": "not_found",
                     "params": {"id": id},
                 });
-                write_out(json_out, &resp)
+                write_out(json_out, json_out_cap, json_out_len, &resp)
             }
         };
     }
@@ -117,17 +136,23 @@ pub extern "C" fn get_handle(json_in: *const c_char, json_out: *mut c_char) -> c
         "data": {"count": guard.len()},
     });
     drop(guard);
-    write_out(json_out, &resp)
+    write_out(json_out, json_out_cap, json_out_len, &resp)
 }
 
 // ---------------- POST：空 body → empty_body；带 body → 创建资源 ----------------
 #[no_mangle]
-pub extern "C" fn post_handle(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    let input = parse_in(json_in);
+pub extern "C" fn post_test_v2(
+    json_in: *const c_char,
+    json_in_len: usize,
+    json_out: *mut c_char,
+    json_out_cap: usize,
+    json_out_len: *mut usize,
+) -> c_int {
+    let input = parse_in(json_in, json_in_len);
 
     if !input.is_object() || input.as_object().map_or(true, |o| o.is_empty()) {
         let resp = json!({"ok": false, "method": "POST", "error": "empty_body"});
-        return write_out(json_out, &resp);
+        return write_out(json_out, json_out_cap, json_out_len, &resp);
     }
 
     let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -140,14 +165,27 @@ pub extern "C" fn post_handle(json_in: *const c_char, json_out: *mut c_char) -> 
         "id": id,
         "created": Value::Object(created),
     });
-    write_out(json_out, &resp)
+    write_out(json_out, json_out_cap, json_out_len, &resp)
 }
 
 // ---------------- PATCH：{"id":N,"patch":{...}} → 部分更新 ----------------
 #[no_mangle]
-pub extern "C" fn patch_handle(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    let input = parse_in(json_in);
-    let missing = |err: &str| write_out(json_out, &json!({"ok": false, "method": "PATCH", "error": err}));
+pub extern "C" fn patch_test_v2(
+    json_in: *const c_char,
+    json_in_len: usize,
+    json_out: *mut c_char,
+    json_out_cap: usize,
+    json_out_len: *mut usize,
+) -> c_int {
+    let input = parse_in(json_in, json_in_len);
+    let missing = |err: &str| {
+        write_out(
+            json_out,
+            json_out_cap,
+            json_out_len,
+            &json!({"ok": false, "method": "PATCH", "error": err}),
+        )
+    };
 
     let id = match input.get("id").and_then(|v| v.as_u64()) {
         Some(id) => id,
@@ -174,25 +212,49 @@ pub extern "C" fn patch_handle(json_in: *const c_char, json_out: *mut c_char) ->
         "method": "PATCH",
         "patched": patched,
     });
-    write_out(json_out, &resp)
+    write_out(json_out, json_out_cap, json_out_len, &resp)
 }
 
 // ---------------- UPDATE：{"id":N,...} → 除 id 外整体替换 ----------------
 #[no_mangle]
-pub extern "C" fn update_handle(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    update_impl(json_in, json_out, "UPDATE")
+pub extern "C" fn update_test_v2(
+    json_in: *const c_char,
+    json_in_len: usize,
+    json_out: *mut c_char,
+    json_out_cap: usize,
+    json_out_len: *mut usize,
+) -> c_int {
+    update_impl(json_in, json_in_len, json_out, json_out_cap, json_out_len, "UPDATE")
 }
 
 // ---------------- PUT：与 UPDATE 同语义 ----------------
 #[no_mangle]
-pub extern "C" fn put_handle(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    update_impl(json_in, json_out, "PUT")
+pub extern "C" fn put_test_v2(
+    json_in: *const c_char,
+    json_in_len: usize,
+    json_out: *mut c_char,
+    json_out_cap: usize,
+    json_out_len: *mut usize,
+) -> c_int {
+    update_impl(json_in, json_in_len, json_out, json_out_cap, json_out_len, "PUT")
 }
 
-fn update_impl(json_in: *const c_char, json_out: *mut c_char, method: &str) -> c_int {
-    let input = parse_in(json_in);
+fn update_impl(
+    json_in: *const c_char,
+    json_in_len: usize,
+    json_out: *mut c_char,
+    json_out_cap: usize,
+    json_out_len: *mut usize,
+    method: &str,
+) -> c_int {
+    let input = parse_in(json_in, json_in_len);
     let missing = |err: &str| {
-        write_out(json_out, &json!({"ok": false, "method": method, "error": err}))
+        write_out(
+            json_out,
+            json_out_cap,
+            json_out_len,
+            &json!({"ok": false, "method": method, "error": err}),
+        )
     };
 
     let id = match input.get("id").and_then(|v| v.as_u64()) {
@@ -217,14 +279,27 @@ fn update_impl(json_in: *const c_char, json_out: *mut c_char, method: &str) -> c
         "method": method,
         "updated": updated,
     });
-    write_out(json_out, &resp)
+    write_out(json_out, json_out_cap, json_out_len, &resp)
 }
 
 // ---------------- DELETE：{"id":N} → 删除 ----------------
 #[no_mangle]
-pub extern "C" fn delete_handle(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    let input = parse_in(json_in);
-    let missing = |err: &str| write_out(json_out, &json!({"ok": false, "method": "DELETE", "error": err}));
+pub extern "C" fn delete_test_v2(
+    json_in: *const c_char,
+    json_in_len: usize,
+    json_out: *mut c_char,
+    json_out_cap: usize,
+    json_out_len: *mut usize,
+) -> c_int {
+    let input = parse_in(json_in, json_in_len);
+    let missing = |err: &str| {
+        write_out(
+            json_out,
+            json_out_cap,
+            json_out_len,
+            &json!({"ok": false, "method": "DELETE", "error": err}),
+        )
+    };
 
     let id = match input.get("id").and_then(|v| v.as_u64()) {
         Some(id) => id,
@@ -241,5 +316,5 @@ pub extern "C" fn delete_handle(json_in: *const c_char, json_out: *mut c_char) -
         "method": "DELETE",
         "deleted": {"id": id},
     });
-    write_out(json_out, &resp)
+    write_out(json_out, json_out_cap, json_out_len, &resp)
 }

@@ -1,5 +1,6 @@
 // src/ws_call.c
 #include "ws_call.h"
+#include "json_validate.h"
 #include "mongoose.h"
 #include <ctype.h>
 #include <stdio.h>
@@ -26,14 +27,11 @@ static int ws_safe_name(const char *s) {
 
 static int is_object_or_null(const char *s) {
     if (!s) return 0;
-    while (*s && isspace((unsigned char)*s)) s++;
-    if (*s == '{') return 1;
-    if (strncmp(s, "null", 4) == 0) {
-        const char *p = s + 4;
-        while (*p && isspace((unsigned char)*p)) p++;
-        return *p == 0;
-    }
-    return 0;
+    size_t len = strlen(s);
+    if (!json_validate(s, len)) return 0;
+
+    while (*s && isspace((unsigned char) *s)) s++;
+    return *s == '{' || strncmp(s, "null", 4) == 0;
 }
 
 static void set_err(char *err, size_t size, const char *msg) {
@@ -48,6 +46,10 @@ int ws_call_parse(const char *payload, size_t len, ws_call_req_t *out,
 
     if (!payload || len == 0 || len > WS_CALL_MAX_PAYLOAD) {
         set_err(err, err_size, "invalid payload size");
+        return WS_CALL_ERR_PARAM;
+    }
+    if (!json_validate(payload, len)) {
+        set_err(err, err_size, "invalid JSON payload");
         return WS_CALL_ERR_PARAM;
     }
 

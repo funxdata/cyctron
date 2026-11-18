@@ -24,7 +24,6 @@ target
 /target
 
 **/dist/
-build/
 *.o
 .ninja_log
 ./clib
@@ -40,12 +39,13 @@ libary/
 chat
 /**/*.swp
 /core*
-# 构建产物：build/ 与 build-*/（合并说明：保留 libary 分支的 build*/ 规则）
+# 构建产物：build/ 与 build-*/ 等所有 build* 目录一律不入库
 build*/
+# 本地测试环境（dytes test 生成，不入库）
+.dytes/
 cyctron.exe
+cyctron.pid
 publish*
-# 压力测试结果（本地生成，不入库）
-test-results/
 # 第三方子模块/未初始化目录：由 .gitmodules 管理，不提交其内部改动
 crates/criterion*
 crates/libffi

@@ -1,5 +1,5 @@
 // libary_request.ts - libary 动态库接口验证（可重复运行）
-// 前置：主目录执行 ./cyctron start（并把 examples/libary_demo 产物放到 ./libary/）
+// 前置：在 .dytes/ 执行 ./cyctron.exe start（插件放在 .dytes/libary/）
 // 运行：deno run --allow-net libary_request.ts [port]
 //
 // 覆盖：GET 无参/query 带参/不存在、POST 空/正常、PATCH、UPDATE、PUT、

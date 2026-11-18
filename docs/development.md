@@ -7,7 +7,7 @@ src/
   main.c            启动、命令行、主循环
   handler.c         总路由（OPTIONS/WS/SSE/API/插件/static）
   handler_libary.c  插件调用
-  plugin_path.c     插件路径解析（plugins 优先、libary 回退）
+  plugin_path.c     插件路径解析（仅 libary）
   handler_static.c  静态文件
   handler_ws.c      WebSocket 命令
   handler_sse.c     SSE
@@ -26,7 +26,7 @@ todo/               模块设计与完成记录
 
 1. 在 `include/server.h`（或新建头文件）声明处理函数。
 2. 在 `src/handler.c` 的 `MG_EV_HTTP_MSG` 中加分支，注意顺序：
-   - OPTIONS → WebSocket → SSE → `/api/*` → 插件探测 → 静态 → 插件兜底
+   - OPTIONS → WebSocket → SSE → 插件探测 → 静态 → 插件兜底
 3. 在 `CMakeLists.txt` 的 `CORE_SOURCES` 中加入新源文件。
 4. 补充测试（C 或 TS）与文档。
 
@@ -63,11 +63,22 @@ crate-type = ["cdylib"]
 use std::ffi::c_char;
 
 #[no_mangle]
-pub extern "C" fn get_handle(json_in: *const c_char, json_out: *mut c_char) -> i32 {
-    // 64 KB 输出缓冲
-    let out = b"{\"ok\":true}\0";
+pub extern "C" fn get_test_v2(
+    json_in: *const c_char,
+    json_in_len: usize,
+    json_out: *mut c_char,
+    json_out_cap: usize,
+    json_out_len: *mut usize,
+) -> i32 {
+    let _ = (json_in, json_in_len);
+    let out = b"{\"ok\":true}";
+    if out.len() + 1 > json_out_cap {
+        return -1001; // ENOSPC，*json_out_len 可写所需长度
+    }
     unsafe {
+        *json_out_len = out.len();
         std::ptr::copy_nonoverlapping(out.as_ptr(), json_out as *mut u8, out.len());
+        *json_out.add(out.len()) = 0;
     }
     0
 }
@@ -77,11 +88,12 @@ pub extern "C" fn get_handle(json_in: *const c_char, json_out: *mut c_char) -> i
 
 ```bash
 cargo build --release --manifest-path examples/my_plugin/Cargo.toml
-cp examples/my_plugin/target/release/my_plugin.dll libary/   # Windows（sys 库）
-cp examples/my_plugin/target/release/my_plugin.dll plugins/my_plugin/  # 设计插件
+cp examples/my_plugin/target/release/my_plugin.dll .dytes/libary/   # Windows（本地测试）
 ```
 
-4. 调用：`GET /my_plugin` → `get_handle`。
+运行时从当前目录的 `libary/` 加载；本地测试从 `.dytes/` 启动，因此拷贝到 `.dytes/libary/`。
+
+4. 调用：`GET /my_plugin` → `get_test_v2`（POST/PATCH/UPDATE/PUT/DELETE 同理）。
 
 5. 测试：新增 `tests/test_my_plugin.c`，在 `tests/CMakeLists.txt` 中用
    `if(EXISTS ...)` 注册。
@@ -91,7 +103,7 @@ cp examples/my_plugin/target/release/my_plugin.dll plugins/my_plugin/  # 设计�
 ### C
 
 ```cmake
-add_executable(test_xxx test_xxx.c ../src/calldyn.c ../crates/log/src/log.c)
+add_executable(test_xxx test_xxx.c ../src/calldyn.c ../src/plugin_path.c ../crates/log/src/log.c)
 target_include_directories(test_xxx PRIVATE
     ../include ../crates/log/src ${FFI_INCLUDE_DIRS})
 target_link_libraries(test_xxx PRIVATE
@@ -124,20 +136,15 @@ add_test(NAME xxx COMMAND test_xxx WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 完成后同步更新 `docs/` 与根 `README.md`。
 
-## 6. 分支约定
+## 6. 分支与提交
 
-| 分支 | 用途 |
-| --- | --- |
-| `main` | 集成主线 |
-| `developer` | 历史开发线 |
-| `libary` | libary sys 系统库与测试 |
-| `socket` | soket 压力测试与实时通道优化 |
-| `sse` | SSE 端点与 `sse_demo` |
+所有功能已合并到 `main`；`developer`、`libary`、`socket`、`sse` 仅保留历史记录。
 
 提交前：
 
 ```bash
 git diff --check
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
@@ -163,7 +170,7 @@ mg_http_reply(c, 404,
 
 ### 内存
 
-- `calldyn` 的 `json_out` 由 `malloc` 分配，调用方 `free`。
+- `calldyn` 的 `json_out` 仅在返回 0 时由 `malloc` 分配，调用方 `free`；失败时为 `NULL`。
 - `mg_json_get_str` 的返回值用 `mg_free`。
 - `mg_json_get_tok` 返回原 JSON 的切片，不释放。
 

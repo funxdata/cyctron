@@ -1,17 +1,17 @@
-// test_libary.c - libary_demo 动态库单元测试
+// test_libary.c - libary_demo 动态库单元测试（插件 ABI v2）
 // 覆盖：GET 无参/带参/不存在、POST 空/正常、PATCH、UPDATE、PUT、DELETE、
-//       边界（NULL 入参、非法 JSON、未知符号、空输出缓冲）
+//       边界（NULL 入参、非法 JSON、未知符号、缺失插件）
 #include "../include/calldyn.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
-#define PLUGIN "./libary/libary_demo.dll"
-#define MISSING_PLUGIN "./libary/nope.dll"
+#define PLUGIN "./.dytes/libary/libary_demo.dll"
+#define MISSING_PLUGIN "./.dytes/libary/nope.dll"
 #else
-#define PLUGIN "./libary/libary_demo.so"
-#define MISSING_PLUGIN "./libary/nope.so"
+#define PLUGIN "./.dytes/libary/libary_demo.so"
+#define MISSING_PLUGIN "./.dytes/libary/nope.so"
 #endif
 
 static int passed = 0, failed = 0;
@@ -21,10 +21,11 @@ static void check(int cond, const char *name, const char *detail) {
     else { failed++; printf("  [FAIL] %s  (%s)\n", name, detail ? detail : ""); }
 }
 
-// 调用并返回 json_out（调用者 free），rc 通过参数带回
+// 调用 v2 插件并返回 json_out（调用者 free），rc 通过参数带回
 static char *call(const char *symbol, const char *json_in, int *rc) {
     char *out = NULL;
-    *rc = call_local_dyn_libffi(PLUGIN, symbol, json_in, &out);
+    size_t len = 0;
+    *rc = call_local_dyn_libffi_v2(PLUGIN, symbol, json_in, &out, &len);
     return out;
 }
 
@@ -37,25 +38,25 @@ static void test_get(void) {
     int rc;
     char *out;
 
-    out = call("get_handle", NULL, &rc);
+    out = call("get_test_v2", NULL, &rc);
     check(rc == 0 && out_contains(out, "\"count\":3") && out_contains(out, "alpha"),
           "GET no params -> 3 items", out);
     free(out);
 
-    out = call("get_handle", "{\"id\":1}", &rc);
+    out = call("get_test_v2", "{\"id\":1}", &rc);
     check(rc == 0 && out_contains(out, "\"id\":1") && out_contains(out, "alpha"),
           "GET id=1 -> alpha", out);
     free(out);
 
-    out = call("get_handle", "{\"id\":2}", &rc);
+    out = call("get_test_v2", "{\"id\":2}", &rc);
     check(rc == 0 && out_contains(out, "beta"), "GET id=2 -> beta", out);
     free(out);
 
-    out = call("get_handle", "{\"id\":99}", &rc);
+    out = call("get_test_v2", "{\"id\":99}", &rc);
     check(rc == 0 && out_contains(out, "not_found"), "GET id=99 -> not_found", out);
     free(out);
 
-    out = call("get_handle", "{\"foo\":\"bar\"}", &rc);
+    out = call("get_test_v2", "{\"foo\":\"bar\"}", &rc);
     check(rc == 0 && out_contains(out, "\"foo\":\"bar\""), "GET extra params echoed", out);
     free(out);
 }
@@ -65,21 +66,21 @@ static void test_post(void) {
     int rc;
     char *out;
 
-    out = call("post_handle", NULL, &rc);
+    out = call("post_test_v2", NULL, &rc);
     check(rc == 0 && out_contains(out, "empty_body"), "POST null body -> empty_body", out);
     free(out);
 
-    out = call("post_handle", "{}", &rc);
+    out = call("post_test_v2", "{}", &rc);
     check(rc == 0 && out_contains(out, "empty_body"), "POST {} -> empty_body", out);
     free(out);
 
-    out = call("post_handle", "{\"name\":\"delta\",\"type\":\"js\"}", &rc);
+    out = call("post_test_v2", "{\"name\":\"delta\",\"type\":\"js\"}", &rc);
     check(rc == 0 && out_contains(out, "\"ok\":true") && out_contains(out, "\"id\":4")
           && out_contains(out, "delta"),
           "POST create -> id assigned + echoed", out);
     free(out);
 
-    out = call("post_handle", "{\"name\":\"eps\"}", &rc);
+    out = call("post_test_v2", "{\"name\":\"eps\"}", &rc);
     check(rc == 0 && out_contains(out, "\"id\":5"), "POST second create -> next id", out);
     free(out);
 }
@@ -89,21 +90,21 @@ static void test_patch(void) {
     int rc;
     char *out;
 
-    out = call("patch_handle", NULL, &rc);
+    out = call("patch_test_v2", NULL, &rc);
     check(rc == 0 && out_contains(out, "missing_id"), "PATCH null -> missing_id", out);
     free(out);
 
-    out = call("patch_handle", "{\"id\":1}", &rc);
+    out = call("patch_test_v2", "{\"id\":1}", &rc);
     check(rc == 0 && out_contains(out, "empty_patch"), "PATCH no patch -> empty_patch", out);
     free(out);
 
-    out = call("patch_handle", "{\"id\":1,\"patch\":{\"name\":\"renamed\"}}", &rc);
+    out = call("patch_test_v2", "{\"id\":1,\"patch\":{\"name\":\"renamed\"}}", &rc);
     check(rc == 0 && out_contains(out, "\"ok\":true") && out_contains(out, "renamed")
           && out_contains(out, "\"type\":\"img\""),
           "PATCH merges fields, keeps others", out);
     free(out);
 
-    out = call("patch_handle", "{\"id\":99,\"patch\":{\"x\":1}}", &rc);
+    out = call("patch_test_v2", "{\"id\":99,\"patch\":{\"x\":1}}", &rc);
     check(rc == 0 && out_contains(out, "not_found"), "PATCH missing id -> not_found", out);
     free(out);
 }
@@ -113,21 +114,21 @@ static void test_update_put(void) {
     int rc;
     char *out;
 
-    out = call("update_handle", NULL, &rc);
+    out = call("update_test_v2", NULL, &rc);
     check(rc == 0 && out_contains(out, "empty_body"), "UPDATE null -> empty_body", out);
     free(out);
 
-    out = call("update_handle", "{\"id\":2,\"name\":\"replaced\"}", &rc);
+    out = call("update_test_v2", "{\"id\":2,\"name\":\"replaced\"}", &rc);
     check(rc == 0 && out_contains(out, "UPDATE") && out_contains(out, "replaced"),
           "UPDATE replaces item", out);
     free(out);
 
-    out = call("put_handle", "{\"id\":3,\"name\":\"putted\"}", &rc);
+    out = call("put_test_v2", "{\"id\":3,\"name\":\"putted\"}", &rc);
     check(rc == 0 && out_contains(out, "PUT") && out_contains(out, "putted"),
           "PUT same semantics", out);
     free(out);
 
-    out = call("update_handle", "{\"id\":99,\"name\":\"x\"}", &rc);
+    out = call("update_test_v2", "{\"id\":99,\"name\":\"x\"}", &rc);
     check(rc == 0 && out_contains(out, "not_found"), "UPDATE missing -> not_found", out);
     free(out);
 }
@@ -137,15 +138,15 @@ static void test_delete(void) {
     int rc;
     char *out;
 
-    out = call("delete_handle", NULL, &rc);
+    out = call("delete_test_v2", NULL, &rc);
     check(rc == 0 && out_contains(out, "missing_id"), "DELETE null -> missing_id", out);
     free(out);
 
-    out = call("delete_handle", "{\"id\":1}", &rc);
+    out = call("delete_test_v2", "{\"id\":1}", &rc);
     check(rc == 0 && out_contains(out, "\"deleted\":{\"id\":1}"), "DELETE id=1 -> ok", out);
     free(out);
 
-    out = call("delete_handle", "{\"id\":1}", &rc);
+    out = call("delete_test_v2", "{\"id\":1}", &rc);
     check(rc == 0 && out_contains(out, "not_found"), "DELETE again -> not_found", out);
     free(out);
 }
@@ -155,7 +156,7 @@ static void test_edges(void) {
     int rc;
     char *out;
 
-    out = call("get_handle", "not a json", &rc);
+    out = call("get_test_v2", "not a json", &rc);
     check(rc == 0 && out_contains(out, "\"method\":\"GET\"") && out_contains(out, "\"params\":null"),
           "invalid json treated as no params", out);
     free(out);
@@ -164,9 +165,11 @@ static void test_edges(void) {
     check(rc == -2 && out == NULL, "unknown symbol -> -2", "");
     free(out);
 
-    rc = call_local_dyn_libffi(MISSING_PLUGIN, "get_handle", "{}", &out);
-    check(rc == -1, "missing plugin -> -1", "");
-    free(out);
+    char *missing_out = NULL;
+    rc = call_local_dyn_libffi_v2(MISSING_PLUGIN, "get_test_v2", "{}",
+                                  &missing_out, NULL);
+    check(rc == -1 && missing_out == NULL, "missing plugin -> -1, no buffer", "");
+    free(missing_out);
 }
 
 int main(void) {

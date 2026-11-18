@@ -1,5 +1,5 @@
 // sse_request.ts - SSE 端点接口验证
-// 前置：主目录执行 ./cyctron start（并将 examples/sse_demo 产物放入 ./libary/）
+// 前置：在 .dytes/ 执行 ./cyctron.exe start（插件放在 .dytes/libary/）
 // 运行：deno run --allow-net ts/sse_request.ts [port]
 //
 // 覆盖：连接/响应头、事件格式、id 递增、data JSON、Last-Event-ID 续传、方法限制。

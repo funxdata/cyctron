@@ -1,5 +1,6 @@
 #include "event_pusher.h"
 #include "event_format.h"
+#include "json_validate.h"
 #include "log.h"
 #include "mongoose.h"
 #include "handler_ws.h"
@@ -70,7 +71,11 @@ void event_pusher_cleanup(void) {
         g_nng_initialized = 0;
     }
     g_initialized = false;
-    log_info("[EventPusher] Cleaned up (total pushes: %lu)", g_push_count);
+    pthread_mutex_lock(&g_ws_mutex);
+    uint64_t pushes = g_push_count;
+    pthread_mutex_unlock(&g_ws_mutex);
+    log_info("[EventPusher] Cleaned up (total pushes: %llu)",
+             (unsigned long long)pushes);
 }
 
 void event_push(const char *data) {
@@ -88,6 +93,12 @@ void event_push(const char *data) {
 }
 
 void event_push_with_type(const char *type, const char *data) {
+    if (!type || !data) return;
+    if (!json_validate(data, strlen(data))) {
+        log_warn("[EventPusher] invalid JSON data for type '%s', dropped", type);
+        return;
+    }
+
     char *buf = NULL;
     if (event_format_with_type(type, data, &buf) == 0 && buf) {
         event_push(buf);
@@ -124,7 +135,8 @@ void event_push_to(struct mg_connection *c, const char *data) {
     if (c->is_websocket) {
         mg_ws_send(c, data, strlen(data), WEBSOCKET_OP_TEXT);
         g_push_count++;
-        log_debug("[EventPusher] WS(to=%lu): %s", c->id, data);
+        log_debug("[EventPusher] WS(to=%llu): %s",
+                  (unsigned long long)c->id, data);
     }
     pthread_mutex_unlock(&g_ws_mutex);
 }
@@ -163,6 +175,9 @@ bool event_pusher_has_connection(void) {
 }
 
 uint64_t event_pusher_get_push_count(void) {
-    return g_push_count;
+    pthread_mutex_lock(&g_ws_mutex);
+    uint64_t count = g_push_count;
+    pthread_mutex_unlock(&g_ws_mutex);
+    return count;
 }
 

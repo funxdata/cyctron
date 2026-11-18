@@ -1,11 +1,10 @@
 // src/ws_command.c
 #include "ws_command.h"
+#include "ws_message.h"
 #include "mongoose.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define WS_COMMAND_MAX_PAYLOAD (1024 * 1024)
 
 static void set_err(char *err, size_t size, const char *msg) {
     if (err && size) snprintf(err, size, "%s", msg ? msg : "");
@@ -17,7 +16,7 @@ int ws_command_parse(const char *payload, size_t len, ws_command_t *out,
     memset(out, 0, sizeof(*out));
     if (err && err_size) err[0] = 0;
 
-    if (!payload || len == 0 || len > WS_COMMAND_MAX_PAYLOAD) {
+    if (!payload || len == 0 || len > WS_MAX_MESSAGE_BYTES) {
         set_err(err, err_size, "invalid payload size");
         return -1;
     }

@@ -10,16 +10,10 @@
 #include "handler_ws.h"
 #include "handler_sse.h"
 #include "plugin_path.h"
+#include "uri.h"
 
 extern struct mg_connection *g_ws_conn;
 extern pthread_mutex_t g_ws_mutex;
-
-static void reply_json(struct mg_connection *c, int code, const char *json) {
-    mg_http_reply(c, code,
-        "Access-Control-Allow-Origin: *\r\n"
-        "Content-Type: application/json\r\n",
-        "%s", json);
-}
 
 void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
     switch (ev) {
@@ -43,11 +37,16 @@ void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
             
             // ====== WebSocket ======
             if (hm->uri.len == 6 && strncmp(hm->uri.buf, "/soket", 6) == 0) {
-                mg_ws_upgrade(c, hm, NULL);
+                // 先切换到 WS 事件处理器：mg_ws_upgrade 成功时会在内部
+                // 同步触发 MG_EV_WS_OPEN，由 ws_ev_handler 完成注册与欢迎消息。
                 c->fn = ws_ev_handler;
-                printf("Upgrading connection to WebSocket: %p\n", c);
-                
-                ws_on_upgrade(c);
+                mg_ws_upgrade(c, hm, NULL);
+                if (!c->is_websocket) {
+                    // 缺少 Sec-WebSocket-Key 时 mg_ws_upgrade 已回复 426 并 draining
+                    c->fn = ev_handler;
+                    log_warn("[WS] upgrade failed conn=%llu",
+                             (unsigned long long)c->id);
+                }
                 return;
             }
             
@@ -57,81 +56,32 @@ void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
                 return;
             }
 
-            // ====== HTTP API ======
-            if (hm->uri.len >= 10 && strncmp(hm->uri.buf, "/api/push", 10) == 0) {
-                if (strcmp(method, "POST") == 0) {
-                    char message[1024] = "{\"message\":\"Hello from HTTP API\"}";
-                    if (hm->body.len > 0) {
-                        size_t n = hm->body.len < sizeof(message)-1 ? hm->body.len : sizeof(message)-1;
-                        memcpy(message, hm->body.buf, n);
-                        message[n] = '\0';
-                    }
-                    event_push_with_type("http_api", message);
-                    log_info("[API] Pushed: %s", message);
-                    reply_json(c, 200, "{\"success\":true,\"message\":\"Pushed to WebSocket\"}");
-                    return;
-                }
-            }
-            
-            if (hm->uri.len >= 11 && strncmp(hm->uri.buf, "/api/status", 11) == 0) {
-                if (strcmp(method, "GET") == 0) {
-                    char response[256];
-                    bool has_conn = event_pusher_has_connection();
-                    uint64_t count = event_pusher_get_push_count();
-                    snprintf(response, sizeof(response),
-                        "{\"websocket\":%s,\"push_count\":%lu,\"status\":\"running\"}",
-                        has_conn ? "connected" : "disconnected", count);
-                    reply_json(c, 200, response);
-                    return;
-                }
-            }
-            
-            if (hm->uri.len >= 12 && strncmp(hm->uri.buf, "/api/iceoryx", 12) == 0) {
-                if (strcmp(method, "POST") == 0) {
-                    if (hm->body.len > 0) {
-                        char body_data[2048];
-                        size_t n = hm->body.len < sizeof(body_data)-1 ? hm->body.len : sizeof(body_data)-1;
-                        memcpy(body_data, hm->body.buf, n);
-                        body_data[n] = '\0';
-                        event_push_with_type("iceoryx", body_data);
-                        log_info("[API] Iceoryx data pushed: %zu bytes", hm->body.len);
-                        char resp[64];
-                        snprintf(resp, sizeof(resp), "{\"success\":true,\"size\":%zu}", hm->body.len);
-                        reply_json(c, 200, resp);
-                    } else {
-                        reply_json(c, 400, "{\"error\":\"empty body\"}");
-                    }
-                    return;
-                }
-            }
-            
-            if (hm->uri.len >= 10 && strncmp(hm->uri.buf, "/api/log", 8) == 0) {
-                if (strcmp(method, "POST") == 0) {
-                    char body[1024] = "{\"level\":\"info\",\"message\":\"Log message\"}";
-                    if (hm->body.len > 0) {
-                        size_t n = hm->body.len < sizeof(body)-1 ? hm->body.len : sizeof(body)-1;
-                        memcpy(body, hm->body.buf, n);
-                        body[n] = '\0';
-                    }
-                    event_push_with_type("log", body);
-                    log_info("[API] Log pushed");
-                    reply_json(c, 200, "{\"success\":true}");
-                    return;
-                }
-            }
-            
-            // ====== 插件路由（任意方法，含 GET/HEAD） ======
-            // 设计插件优先 ./plugins/<name>/<name>.dll，其次 ./libary/<name>.dll
-            {
-                char probe[512];
-                size_t plen = hm->uri.len < sizeof(probe) - 1 ? hm->uri.len : sizeof(probe) - 1;
-                memcpy(probe, hm->uri.buf, plen);
-                probe[plen] = '\0';
-                char *q = strchr(probe, '?');
-                if (q) *q = '\0';
+            // 去掉 query，构造用于路由判断的路径
+            char uri_path[512];
+            size_t ulen = hm->uri.len < sizeof(uri_path) - 1
+                        ? hm->uri.len : sizeof(uri_path) - 1;
+            memcpy(uri_path, hm->uri.buf, ulen);
+            uri_path[ulen] = '\0';
+            char *q = strchr(uri_path, '?');
+            if (q) *q = '\0';
 
-                const char *clean = probe[0] == '/' ? probe + 1 : probe;
-                if (*clean && !uri_has_traversal(probe)) {
+            int get_or_head = strcmp(method, "GET") == 0 ||
+                              strcmp(method, "HEAD") == 0;
+
+            // ====== 明确的静态资源优先：带扩展名或 /assets 前缀 ======
+            if (get_or_head &&
+                (has_file_extension(uri_path) ||
+                 strcmp(uri_path, "/assets") == 0 ||
+                 strncmp(uri_path, "/assets/", 8) == 0)) {
+                ev_handler_static(c, ev, ev_data);
+                return;
+            }
+
+            // ====== 插件路由（任意方法） ======
+            // 能力库从 ./libary/<name>.<ext> 加载
+            {
+                const char *clean = uri_path[0] == '/' ? uri_path + 1 : uri_path;
+                if (*clean && !uri_has_traversal(uri_path)) {
                     char lib_path[600];
                     if (plugin_resolve_path(clean, lib_path, sizeof(lib_path)) == 0) {
                         event_push_with_type("libary", "{\"operation\":\"library_call\"}");
@@ -141,13 +91,13 @@ void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
                 }
             }
 
-            // ====== 静态文件（GET/HEAD） ======
-            if (strcmp(method, "GET") == 0 || strcmp(method, "HEAD") == 0) {
+            // ====== 无后缀 GET/HEAD：页面 / 目录 index / 404 ======
+            if (get_or_head) {
                 ev_handler_static(c, ev, ev_data);
                 return;
             }
 
-            // ====== 其余请求统一路由到 libary 动态库 ======
+            // ====== 其余方法统一路由到 libary 动态库 ======
             event_push_with_type("libary", "{\"operation\":\"library_call\"}");
             ev_handler_libary(c, ev, ev_data);
             break;

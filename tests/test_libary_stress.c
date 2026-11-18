@@ -9,9 +9,9 @@
 #include <time.h>
 
 #ifdef _WIN32
-#define PLUGIN "./libary/libary_demo.dll"
+#define PLUGIN "./.dytes/libary/libary_demo.dll"
 #else
-#define PLUGIN "./libary/libary_demo.so"
+#define PLUGIN "./.dytes/libary/libary_demo.so"
 #endif
 #define SERIAL_N 20000
 #define THREADS 8
@@ -19,7 +19,7 @@
 
 static int call_once(const char *symbol, const char *json_in) {
     char *out = NULL;
-    int rc = call_local_dyn_libffi(PLUGIN, symbol, json_in, &out);
+    int rc = call_local_dyn_libffi_v2(PLUGIN, symbol, json_in, &out, NULL);
     free(out);
     return rc;
 }
@@ -43,17 +43,17 @@ static void *worker(void *arg) {
         // 混合读/写负载
         switch (i % 4) {
             case 0:
-                if (call_once("get_handle", NULL) != 0) res->failures++;
+                if (call_once("get_test_v2", NULL) != 0) res->failures++;
                 break;
             case 1:
-                if (call_once("get_handle", "{\"id\":2}") != 0) res->failures++;
+                if (call_once("get_test_v2", "{\"id\":2}") != 0) res->failures++;
                 break;
             case 2:
                 snprintf(body, sizeof(body), "{\"name\":\"s%d\",\"type\":\"t\"}", i);
-                if (call_once("post_handle", body) != 0) res->failures++;
+                if (call_once("post_test_v2", body) != 0) res->failures++;
                 break;
             case 3:
-                if (call_once("patch_handle",
+                if (call_once("patch_test_v2",
                         "{\"id\":3,\"patch\":{\"name\":\"p\"}}") != 0) res->failures++;
                 break;
         }
@@ -71,7 +71,7 @@ int main(void) {
         double t0 = now_ms();
         int done = 0;
         for (int i = 0; i < SERIAL_N; i++) {
-            rc = call_once("get_handle", NULL);
+            rc = call_once("get_test_v2", NULL);
             done++;
             if (rc != 0) { hard_fail++; break; }
         }
@@ -85,7 +85,7 @@ int main(void) {
             .duration_ms = dt,
             .failures = hard_fail,
             .status = hard_fail ? "FAIL" : "PASS",
-            .notes = "libary_demo get_handle, serial"
+            .notes = "libary_demo get_test_v2, serial"
         };
         stress_report_write(&report);
 

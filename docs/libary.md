@@ -1,25 +1,24 @@
-# 动态库插件（plugins / libary）
+# 动态库插件（libary）
 
 插件是 cyctron 的核心扩展机制：HTTP 请求按 URI 映射到动态库，再通过 libffi
-调用库导出的 C ABI 函数。动态库有两类来源，按以下顺序解析：
+调用库导出的 C ABI 函数。
 
-1. **设计插件**：`./plugins/<name>/<name>.<ext>`（安装目录，见
-   [design_plugins](https://github.com/dytescn/design_plugins) 与 `piksel_install`）；
-2. **sys 能力库**：`./libary/<name>.<ext>`（旧目录，继续兼容）。
+设计插件的调用已迁移到 chatllm，本服务只从 `./libary/` 加载能力库：
 
-`./plugins/<name>/` 内优先找 `<name>.<ext>`、`lib<name>.<ext>`，都没有时取目录中
-第一个同扩展名的动态库（兼容导出文件名与包名不一致的插件）。
+1. **能力库**：`./libary/<name>.<ext>`；
+2. 兼容 Linux 的 `lib<name>.<ext>` 命名。
 
 ## 1. 目录与扩展名
 
-| 平台 | 设计插件目录 | sys 库目录 | 扩展名 |
-| --- | --- | --- | --- |
-| Windows | `.\plugins\<name>\` | `.\libary` | `.dll` |
-| Linux | `./plugins/<name>/` | `./libary` | `.so` |
-| macOS | `./plugins/<name>/` | `./libary` | `.dylib` |
+| 平台 | 库目录 | 扩展名 |
+| --- | --- | --- |
+| Windows | `.\libary` | `.dll` |
+| Linux | `./libary` | `.so` |
+| macOS | `./libary` | `.dylib` |
 
 目录与扩展名由 `include/global.h` 定义，路径解析集中在 `src/plugin_path.c`。
-`./plugins/` 与 `./libary/` 都被 `.gitignore` 忽略，插件产物不入库。
+`./libary/` 被 `.gitignore` 忽略，插件产物不入库。`./plugins/` 由 chatllm 管理，
+cyctron 不再读取。
 
 ## 2. URI 与符号映射
 
@@ -35,9 +34,9 @@ FFI-Symbol: add
 
 | 部分 | 规则 |
 | --- | --- |
-| 插件路径 | `./plugins/<name>/<name><ext>` → 回退 `./libary/<name><ext>` |
+| 插件路径 | `./libary/<name><ext>` → 回退 `./libary/lib<name><ext>` |
 | 方法 | 转小写，作为前缀 |
-| 符号 | `<method>_<FFI-Symbol>`；`FFI-Symbol` 缺省为 `handle` |
+| 符号 | `<method>_<FFI-Symbol>_v2`；`FFI-Symbol` 缺省为 `test`，即 `<method>_test_v2` |
 | 示例 | `POST` + `add` → `post_add` |
 
 `FFI-Symbol` 头不区分大小写（服务端读取 `FFI-Symbol`）。
@@ -57,18 +56,25 @@ FFI-Symbol: add
 ## 4. C ABI
 
 ```c
-int <method>_<symbol>(const char *json_in, char *json_out);
+int <method>_<symbol>_v2(
+    const char *json_in, size_t json_in_len,
+    char *json_out, size_t json_out_cap, size_t *json_out_len);
 ```
 
-- `json_in`：UTF-8 JSON 字符串，可能为 `NULL`。
-- `json_out`：64 KB 输出缓冲区，插件必须写入以 `\0` 结尾的 JSON。
-- 返回值：`0` 成功；非 0 视为失败，HTTP 返回 404 `Plugin Not Found`。
+- `json_in`：UTF-8 JSON，可能为 `NULL`（此时 `json_in_len == 0`）。
+- `json_out`：宿主提供的输出缓冲区，首次 1 MB。
+- `json_out_len`：插件写入实际 JSON 字节数（不含结尾 `\0`）。
+- 返回值：
+  - `0`：成功；
+  - `-1001`（`CYCTRON_FFI_ENOSPC`）：输出不足，`*json_out_len` 写入所需字节数，
+    宿主会扩容（上限 16 MB）后重试一次；
+  - 其它负值：失败，HTTP 返回 404 `Plugin Not Found`。
 
 服务端处理：
 
 - `dlopen` 句柄缓存（最多 32 个），库常驻，库内 `static` 状态在多次调用间保留。
-- 调用是同步的，运行在 mongoose 主线程。
-- 输出超过 64 KB 会被截断。
+- 调用是同步的，运行在 mongoose 主线程（WebSocket `call` 走 worker 线程）。
+- 输出超过 16 MB 时返回错误，不再静默截断。
 
 ## 5. 响应与错误
 
@@ -102,21 +108,27 @@ URI 含 `..` 返回 400。
 
 | 方法 | 符号 | 行为 |
 | --- | --- | --- |
-| GET | `get_handle` | 无参返回列表；`{"id":N}` 返回单条；不存在返回 `not_found` |
-| POST | `post_handle` | 空 body → `empty_body`；否则创建并自增 id |
-| PATCH | `patch_handle` | `{"id":N,"patch":{...}}` 部分更新 |
-| UPDATE | `update_handle` | `{"id":N,...}` 全量替换 |
-| PUT | `put_handle` | 与 UPDATE 同语义 |
-| DELETE | `delete_handle` | `{"id":N}` 删除 |
+| GET | `get_test_v2` | 无参返回列表；`{"id":N}` 返回单条；不存在返回 `not_found` |
+| POST | `post_test_v2` | 空 body → `empty_body`；否则创建并自增 id |
+| PATCH | `patch_test_v2` | `{"id":N,"patch":{...}}` 部分更新 |
+| UPDATE | `update_test_v2` | `{"id":N,...}` 全量替换 |
+| PUT | `put_test_v2` | 与 UPDATE 同语义 |
+| DELETE | `delete_test_v2` | `{"id":N}` 删除 |
 
 构建与放置：
 
 ```bash
 cargo build --release --manifest-path examples/libary_demo/Cargo.toml
 # Windows
-cp examples/libary_demo/target/release/libary_demo.dll libary/
+cp examples/libary_demo/target/release/libary_demo.dll .dytes/libary/
 # Linux
-cp examples/libary_demo/target/release/libibary_demo.so libary/libary_demo.so
+cp examples/libary_demo/target/release/libibary_demo.so .dytes/libary/libary_demo.so
+```
+
+从 `.dytes/` 启动服务后，`./libary` 指向测试插件目录：
+
+```bash
+cd .dytes && ./cyctron.exe start -port 44944
 ```
 
 接口示例：
@@ -144,7 +156,7 @@ curl -X POST http://127.0.0.1:44944/libary_demo \
 1. 创建 Rust cdylib 工程（或 C/C++ 动态库）。
 2. 导出 `process_init` 或业务符号，签名为上述 C ABI。
 3. 编译为 `.so` / `.dll` / `.dylib`。
-4. 放到 `./plugins/<name>/<name>.<ext>`（设计插件，推荐）或 `./libary/<name>.<ext>`（sys 库）。
+4. 放到 `./libary/<name>.<ext>`。
 5. 通过 `/<name>` 调用。
 
 Rust 模板：
@@ -153,10 +165,22 @@ Rust 模板：
 use std::ffi::c_char;
 
 #[no_mangle]
-pub extern "C" fn post_hello(json_in: *const c_char, json_out: *mut c_char) -> i32 {
-    let out = b"{\"ok\":true,\"message\":\"hello\"}\0";
+pub extern "C" fn post_hello_v2(
+    json_in: *const c_char,
+    json_in_len: usize,
+    json_out: *mut c_char,
+    json_out_cap: usize,
+    json_out_len: *mut usize,
+) -> i32 {
+    let _ = (json_in, json_in_len);
+    let out = b"{\"ok\":true,\"message\":\"hello\"}";
+    if out.len() + 1 > json_out_cap {
+        return -1001; // ENOSPC
+    }
     unsafe {
+        *json_out_len = out.len();
         std::ptr::copy_nonoverlapping(out.as_ptr(), json_out as *mut u8, out.len());
+        *json_out.add(out.len()) = 0;
     }
     0
 }
@@ -166,14 +190,14 @@ pub extern "C" fn post_hello(json_in: *const c_char, json_out: *mut c_char) -> i
 
 - 插件名来自 URI，当前只做路径遍历校验，没有白名单；不要把不可信 URI 直接映射到任意目录。
 - 插件调用会阻塞主线程，避免在插件内做长时间计算或等待。
-- 输出缓冲固定 64 KB，大响应需自行分页。
+- 输出缓冲按需扩容，上限 16 MB；更大响应需要插件自行分页。
 - Windows 下插件必须与 cyctron 的架构一致（x64），并确保依赖 DLL 可被找到。
 - `FFI-Symbol` 未做字符校验，建议只使用 `[A-Za-z0-9_]`。
 
 ## 9. 测试
 
 - `tests/test_libary.c`：全符号功能与边界。
-- `tests/test_libary_stress.c`：串行/并发压力（`socket` 分支提供统一结果记录）。
+- `tests/test_libary_stress.c`：串行/并发压力。
 - `ts/libary_request.ts`：HTTP 层接口断言。
 
-运行前需把 `libary_demo` 产物放入 `./libary/`。
+运行前需把 `libary_demo` 产物放入 `.dytes/libary/`（本地测试）或运行目录的 `libary/`。

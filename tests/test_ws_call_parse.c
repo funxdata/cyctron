@@ -60,6 +60,12 @@ static void test_args(void) {
     check(parse("{\"id\":\"r\",\"lib\":\"l\",\"symbol\":\"s\",\"args\":{\"a\":1}}", &req) == 0,
           "object args -> 0");
     ws_call_req_free(&req);
+    check(parse("{\"id\":\"r\",\"lib\":\"l\",\"symbol\":\"s\",\"args\":{1,2}}", &req) == WS_CALL_ERR_PARAM,
+          "non-string key args -> -1");
+    ws_call_req_free(&req);
+    check(parse("{\"id\":\"r\",\"lib\":\"l\",\"symbol\":\"s\",\"args\":{\"a\":1,}}", &req) == WS_CALL_ERR_PARAM,
+          "trailing comma args -> -1");
+    ws_call_req_free(&req);
 }
 
 static void test_payload(void) {

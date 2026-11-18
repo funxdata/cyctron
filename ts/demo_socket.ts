@@ -19,7 +19,7 @@ declare global {
 const test_cases = [
   { name: "ping", fn: () => send_message('ping') },
   { name: "status", fn: () => send_message('status') },
-  { name: "bind", fn: () => send_cmd("bind", { uuid: "task-001", lib: "libsoket_demo" }) },
+  { name: "bind", fn: () => send_cmd("bind", { uuid: "task-001", lib: "soket_demo" }) },
   { name: "status_json", fn: () => send_cmd("status") },
   { name: "msg", fn: () => send_cmd("msg", { uuid: "task-001", data: "hello world" }) },
   { name: "remove", fn: () => send_cmd("remove", { uuid: "task-001" }) },

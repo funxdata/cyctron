@@ -8,13 +8,13 @@
 Error starting HTTP+WS server on http://0.0.0.0:44944
 ```
 
-- 换端口：`./cyctron start -port 44945`
+- 换端口：`cd .dytes && ./cyctron.exe start -port 44945`（Linux/macOS 用 `./cyctron`）
 - 查占用：`netstat -ano | findstr :44944`（Windows）/
   `lsof -i :44944`（Linux/macOS）
 
 ### 启动后立即退出
 
-- 确认在项目根目录运行（插件/静态目录是相对路径）。
+- 确认在 `.dytes/`（本地测试）或包含 `libary/` 的目录运行；插件/静态目录是相对路径。
 - 检查 `event_pusher_init` 日志；NNG 监听失败只记录错误，不会阻止 HTTP 启动。
 - Windows Release 使用 `-mwindows`，无控制台；用 Debug 构建或在命令行观察日志。
 
@@ -24,11 +24,11 @@ Error starting HTTP+WS server on http://0.0.0.0:44944
 
 按顺序检查：
 
-1. 文件是否存在：`./plugins/<uri>/<uri>.<dll|so|dylib>` 或 `./libary/<uri>.<dll|so|dylib>`。
+1. 文件是否存在：`./libary/<uri>.<dll|so|dylib>`（兼容 `lib<uri>.<ext>`）。
 2. 扩展名是否与平台一致（Windows `.dll`）。
-3. 符号是否存在：`<小写 method>_<FFI-Symbol>`。
-   - `POST /libary_demo` + `FFI-Symbol: add` → `post_add`
-   - 不带头 → `post_handle`
+3. 符号是否存在：`<小写 method>_<FFI-Symbol>_v2`。
+   - `POST /libary_demo` + `FFI-Symbol: add` → `post_add_v2`
+   - 不带头 → `post_test_v2`
 4. 插件返回值是否为 0。
 5. 插件是否写入了以 `\0` 结尾的 JSON。
 
@@ -53,11 +53,11 @@ Error starting HTTP+WS server on http://0.0.0.0:44944
 
 ## 3. 静态文件
 
-### 访问 `/` 返回 404
+### 访问 `/` 或静态资源异常
 
-- 确认 `web/index.html` 存在。
-- 无后缀 URI 会回退到 `web/index.html`。
-- 带后缀 URI 直接映射到 `web/<uri>`。
+- `/`、`/index.html` 会优先读取 `web/index.html`，文件不存在时才使用内置首页。
+- 带后缀 URI 或 `/assets/*` 映射到 `web/<uri>`；缺失返回 404。
+- 无后缀页面路由只有浏览器（`Accept: text/html`）才会回退首页；其他请求返回 404。
 
 ### 路径遍历被拒绝
 
@@ -67,12 +67,12 @@ Error starting HTTP+WS server on http://0.0.0.0:44944
 
 ### 返回 503 `SSE plugin unavailable`
 
-- 确认 `./libary/sse_demo.<ext>` 存在。
-- 先构建 `examples/sse_demo` 并拷贝到 `./libary/`。
+- 确认 `libary/sse_demo.<ext>` 存在（本地测试为 `.dytes/libary/sse_demo.<ext>`）。
+- 先构建 `examples/sse_demo` 并拷贝到运行目录的 `libary/`。
 
 ### 连接建立但收不到事件
 
-- 检查插件 `sse_next` 是否返回 `id` 大于 `after_id`。
+- 检查插件 `sse_next_v2` 是否返回 `id` 大于 `after_id`。
 - 查看日志中的 `[SSE] sse_next failed`。
 - 用 `curl -N` 直接观察原始流。
 - 代理可能缓冲：已发送 `X-Accel-Buffering: no`，仍需在网关关闭缓冲。
@@ -80,7 +80,7 @@ Error starting HTTP+WS server on http://0.0.0.0:44944
 ### 事件被截断
 
 - 单事件 `data` 上限约 4 KB（C 端缓冲）。
-- 插件输出总缓冲 64 KB。
+- 插件输出缓冲初始 1 MB，ABI v2 下可按需扩容至 16 MB。
 
 ### `Last-Event-ID` 不生效
 
@@ -92,14 +92,14 @@ Error starting HTTP+WS server on http://0.0.0.0:44944
 
 ### 连接后没有任务事件
 
-- 先发送 `{"cmd":"bind","uuid":"task-001","lib":"libsoket_demo"}`。
+- 先发送 `{"cmd":"bind","uuid":"task-001","lib":"soket_demo"}`。
 - 确认 `./core/` 下存在对应插件（`call_local_dyn_socklibffi` 从 `./core/` 加载）。
 - 查看 `[Scheduler]` 日志。
 
 ### 多个客户端互相干扰
 
-当前只支持单 WS 连接；后连接会覆盖 `g_ws_conn`，任一连接关闭会清理全部任务。
-这是已知限制，优化计划见 `todo/socket.md`。
+最多允许 32 个 WS 连接；全局事件推送到最近一个 `g_ws_conn`。
+任一连接关闭只会清理该连接的任务。
 
 ### RT_TASK_STOPPED 但插件仍在运行
 
@@ -117,7 +117,7 @@ Error starting HTTP+WS server on http://0.0.0.0:44944
 ### PUB/SUB 丢消息
 
 PUB/SUB 是尽力而为语义；突发流量或订阅未建立时会丢。
-压测基线见 `test-results/stress.jsonl`（`socket` 分支）。
+压测基线见 `docs/results/stress.jsonl`。
 
 ### 订阅端收不到
 
@@ -129,10 +129,10 @@ PUB/SUB 是尽力而为语义；突发流量或订阅未建立时会丢。
 ### `libffi.a not found`
 
 - Windows 需要 `crates/libffi-packages/libffi.a`。
-- 若文件缺失，从 `developer` 分支恢复：
+- 若文件缺失，从 `main` 分支恢复：
 
 ```bash
-git checkout developer -- crates/libffi-packages
+git checkout main -- crates/libffi-packages
 ```
 
 ### `fatal error: nng/nng.h: No such file`
@@ -166,7 +166,7 @@ cmake --build build -j4
 对应插件不存在时，CMake 不会 `add_test`：
 
 ```bash
-ls libary/
+ls .dytes/libary/
 ```
 
 ### TS 测试连接失败

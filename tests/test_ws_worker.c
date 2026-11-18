@@ -59,11 +59,20 @@ int call_local_dyn_libffi(const char *path, const char *fn,
     return -1;
 }
 
+/* Stub required by ws_worker.c default executor (ABI v2). */
+int call_local_dyn_libffi_v2(const char *path, const char *fn,
+                             const char *in, char **out, size_t *out_len) {
+    (void)path; (void)fn; (void)in;
+    if (out) *out = NULL;
+    if (out_len) *out_len = 0;
+    return -1;
+}
+
 #define MAX_RESULTS 128
 static char *g_results[MAX_RESULTS];
 static int g_result_count = 0;
 
-static void on_done(unsigned long conn_id, const char *json, void *user) {
+static void on_done(uint64_t conn_id, const char *json, void *user) {
     (void)conn_id;
     (void)user;
     if (g_result_count >= MAX_RESULTS) return;
@@ -89,7 +98,7 @@ static void wait_for_results(int expected, int timeout_ms) {
     ws_worker_drain(on_done, NULL);
 }
 
-static int submit(unsigned long conn_id, const char *id, long timeout_ms) {
+static int submit(uint64_t conn_id, const char *id, long timeout_ms) {
     return ws_worker_submit(conn_id, id, "chatllm", "post_chat", "{}", timeout_ms);
 }
 

@@ -91,7 +91,7 @@ void ev_handler_libary(struct mg_connection *c, int ev, void *ev_data) {
         return;
     }
 
-    // URI → 插件名：/cdrimex → ./plugins/cdrimex/cdrimex.dll（回退 ./libary/cdrimex.dll）
+    // URI → 库名：/cdrimex → ./libary/cdrimex.<ext>
     // （query 参数由 hm->query 提供，不在 uri 里）
     const char *clean_uri = uri[0] == '/' ? uri + 1 : uri;
     if (!*clean_uri) {
@@ -111,9 +111,9 @@ void ev_handler_libary(struct mg_connection *c, int ev, void *ev_data) {
 
     char *json_in = build_json_in(hm);
 
-    // FFI-Symbol 头覆盖默认符号；默认 <method>_handle
+    // FFI-Symbol 头覆盖默认后缀；默认 <method>_test，最终符号为 <method>_<suffix>_v2
     const struct mg_str *ffi_symbol_str = mg_http_get_header(hm, "FFI-Symbol");
-    char ffi_symbol[128] = "handle";
+    char ffi_symbol[128] = "test";
     if (ffi_symbol_str && ffi_symbol_str->len > 0) {
         size_t len = ffi_symbol_str->len < sizeof(ffi_symbol) - 1
                ? ffi_symbol_str->len
@@ -122,13 +122,14 @@ void ev_handler_libary(struct mg_connection *c, int ev, void *ev_data) {
         ffi_symbol[len] = '\0';
     }
     char final_symbol[256];
-    snprintf(final_symbol, sizeof(final_symbol), "%s_%s", method, ffi_symbol);
+    snprintf(final_symbol, sizeof(final_symbol), "%s_%s_v2", method, ffi_symbol);
 
     char *json_out = NULL;
-    int rc = call_local_dyn_libffi(ffi_path, final_symbol, json_in, &json_out);
+    int rc = call_local_dyn_libffi_v2(ffi_path, final_symbol, json_in, &json_out, NULL);
 
     free(json_in);
     if (rc != 0 || !json_out) {
+        free(json_out);
         mg_http_reply(c, 404,
             "Access-Control-Allow-Origin: *\r\n"
             "Content-Type: application/json\r\n",

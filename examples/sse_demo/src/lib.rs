@@ -1,11 +1,13 @@
 // sse_demo - cyctron SSE 事件源示例
 //
-// C ABI: int <symbol>(const char *json_in, char *json_out)
-// 输出缓冲区 64 KB，输出为紧凑 JSON，字段顺序固定为 id,event,data。
+// 默认事件源 sse_next_v2 使用插件 ABI v2：
+//   int sse_next_v2(const char *json_in, size_t json_in_len,
+//                   char *json_out, size_t json_out_cap, size_t *json_out_len)
+// process_init / sse_status / sse_reset 仍为旧 2 参数 ABI（soket/realtime 链路）。
 //
 // 导出符号：
 //   process_init  {"config":{"interval_ms":200,"event":"tick"}} -> {"ok":true,...}
-//   sse_next      {"after_id":N} -> {"id":N+1,"event":"tick","data":{...}}
+//   sse_next_v2   {"after_id":N} -> {"id":N+1,"event":"tick","data":{...}}
 //   sse_status    {} -> {"ok":true,"seq":N,"interval_ms":200,"event":"tick"}
 //   sse_reset     {} -> {"ok":true,"seq":0}
 
@@ -16,6 +18,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const OUT_BUF_SIZE: usize = 65536;
+const ENOSPC: c_int = -1001;
 
 struct State {
     seq: u64,
@@ -59,6 +62,43 @@ fn write_out_str(json_out: *mut c_char, s: &str) -> c_int {
         *json_out.add(n) = 0;
     }
     if truncated { -1 } else { 0 }
+}
+
+fn parse_in_v2(json_in: *const c_char, json_in_len: usize) -> Value {
+    if json_in.is_null() || json_in_len == 0 {
+        return Value::Null;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(json_in as *const u8, json_in_len) };
+    let s = std::str::from_utf8(bytes).unwrap_or("").trim();
+    if s.is_empty() {
+        return Value::Null;
+    }
+    serde_json::from_str(s).unwrap_or(Value::Null)
+}
+
+fn write_out_str_v2(
+    json_out: *mut c_char,
+    cap: usize,
+    out_len: *mut usize,
+    s: &str,
+) -> c_int {
+    if out_len.is_null() {
+        return -1;
+    }
+    unsafe {
+        *out_len = s.len();
+    }
+    if json_out.is_null() {
+        return -1;
+    }
+    if s.len() + 1 > cap {
+        return ENOSPC;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(s.as_ptr(), json_out as *mut u8, s.len());
+        *json_out.add(s.len()) = 0;
+    }
+    0
 }
 
 // 事件名只保留安全字符，避免破坏 SSE 行格式
@@ -111,8 +151,14 @@ pub extern "C" fn process_init(json_in: *const c_char, json_out: *mut c_char) ->
 }
 
 #[no_mangle]
-pub extern "C" fn sse_next(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    let input = parse_in(json_in);
+pub extern "C" fn sse_next_v2(
+    json_in: *const c_char,
+    json_in_len: usize,
+    json_out: *mut c_char,
+    json_out_cap: usize,
+    json_out_len: *mut usize,
+) -> c_int {
+    let input = parse_in_v2(json_in, json_in_len);
     let after_id = input
         .get("after_id")
         .and_then(|v| v.as_u64())
@@ -133,7 +179,7 @@ pub extern "C" fn sse_next(json_in: *const c_char, json_out: *mut c_char) -> c_i
         "{{\"id\":{},\"event\":\"{}\",\"data\":{}}}",
         id, event, data
     );
-    write_out_str(json_out, &out)
+    write_out_str_v2(json_out, json_out_cap, json_out_len, &out)
 }
 
 #[no_mangle]

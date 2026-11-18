@@ -32,11 +32,11 @@ ws://<host>:44944/soket
 ### 3.1 bind
 
 ```json
-{"cmd":"bind","uuid":"task-001","lib":"libsoket_demo"}
+{"cmd":"bind","uuid":"task-001","lib":"soket_demo"}
 ```
 
 - `uuid` 必填，任务唯一标识。
-- `lib` 可选，默认 `libsoket_demo`。
+- `lib` 可选，默认 `soket_demo`。
 - 服务端创建 realtime 任务、监听 NNG PUB，并调用插件的 `process_init`。
 - 结果事件：
 
@@ -81,10 +81,11 @@ ws://<host>:44944/soket
  "args":{"prompt":"你好"},"timeout_ms":120000}
 ```
 
-- `lib`：库名，仅允许 `[A-Za-z0-9_-]`；设计插件取 `plugins/<lib>/`，其余回退 `libary/`。
-- `symbol`：完整导出符号，如 `post_chat`（不是 HTTP 的短名）。
-- `args`：原样传给插件，缺省 `{}`。
-- `timeout_ms`：客户端超时提示；服务端目前不强制中断。
+- `lib`：库名，仅允许 `[A-Za-z0-9_-]`；从 `libary/<lib>.<ext>` 加载。
+- `symbol`：插件导出符号基名，如 `post_chat`；worker 实际调用 `post_chat_v2`。
+- `args`：必须是完整 JSON 对象或 `null`，原样传给插件；缺省 `{}`。服务端会校验整个 payload 的 JSON 结构。
+- `timeout_ms`：超时提示。仍在队列中时超过该值会直接返回 `-7`；插件开始执行后
+  无法安全抢占，但执行完成后若耗时超过 `timeout_ms` 也会标记为 `-7`。
 
 成功响应：
 
@@ -107,9 +108,12 @@ ws://<host>:44944/soket
 | -2 | 库加载、符号查找或调用失败 |
 | -4 | 内存分配失败 |
 | -5 | lib / symbol 非法 |
+| -6 | worker busy（队列满或单连接并发超限） |
+| -7 | timeout（排队超时或执行耗时超过 `timeout_ms`） |
+| -100 | 参数错误（lib / symbol / args） |
 
 > 插件业务失败（如 `result.code = 400102`）仍是 `ok:true`，调用方需检查 `result.code`。
-> `call` 在 mongoose 主循环内同步执行；长耗时插件会阻塞同连接的其他命令。
+> `call` 由 worker 线程执行，结果通过主循环回推；同一连接的调用会串行执行。
 
 ## 4. 事件格式
 
@@ -124,6 +128,8 @@ ws://<host>:44944/soket
 | `echo` | `{"message":"...","len":11}` | 非 JSON 回显 |
 | `error` | `{"message":"..."}` | 命令错误 |
 | `log` / `iceoryx` / `http_api` | 自定义 | API 推送 |
+
+> 事件 `data` 必须是合法 JSON 值；服务端会校验，非法数据会被丢弃并记录 WARN。
 
 示例：
 
@@ -151,7 +157,7 @@ ws://<host>:44944/soket
 const ws = new WebSocket("ws://127.0.0.1:44944/soket");
 
 ws.onopen = () => {
-  ws.send(JSON.stringify({ cmd: "bind", uuid: "task-001", lib: "libsoket_demo" }));
+  ws.send(JSON.stringify({ cmd: "bind", uuid: "task-001", lib: "soket_demo" }));
 };
 
 ws.onmessage = (e) => {
@@ -168,13 +174,12 @@ ws.onmessage = (e) => {
 
 ## 7. 限制与已知问题
 
-- 单连接：多客户端会互相覆盖。
-- 任一连接关闭会触发 `rt_cleanup`，销毁全部任务。
+- 最多 32 个 WS 连接；全局事件推送到最近一个 `g_ws_conn`。
+- 连接关闭只清理该连接的任务（`rt_remove_tasks_by_conn`）。
 - `msg` 未定向到具体任务。
-- `bind` / `msg` 等命令的 JSON 解析仍基于字符串匹配；`call` 已改用 `mg_json_*`。
-- 事件推送已改为动态缓冲，不再受 2048 字节限制。
-- `call` 在 mongoose 主循环内同步执行，长调用会阻塞同连接的其他命令。
-- 心跳/超时逻辑（`rt_run`）尚未接入主循环。
+- 事件推送使用动态缓冲，不再受 2048 字节限制。
+- `call` 由 worker 线程执行，同一连接的调用串行；长调用不会阻塞主循环。
+- `rt_run` 保留空实现，心跳/超时循环未启用。
 - 断线重连不会自动恢复任务。
 
-优化计划见 `todo/socket.md`（`socket` 分支）。
+优化计划见 `todo/socket.md`。

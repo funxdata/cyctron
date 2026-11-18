@@ -3,19 +3,23 @@
 ## 1. 命令行
 
 ```bash
-./cyctron help
-./cyctron start [-port <port>]
-./cyctron stop
-./cyctron reload
+cd .dytes
+./cyctron.exe help
+./cyctron.exe start [-port <port>]
+./cyctron.exe stop
+./cyctron.exe reload
 ```
 
 | 命令 | 说明 |
 | --- | --- |
 | `start` | 启动 HTTP + WebSocket 服务，默认 `0.0.0.0:44944` |
-| `start -port 8080` | 指定端口 |
-| `stop` | 预留（当前仅打印 TODO） |
-| `reload` | 预留（当前仅打印 TODO） |
+| `start -port 8080` | 指定端口（1–65535） |
+| `stop` | 读取启动目录的 `cyctron.pid` 并停止服务；Linux/macOS 发 SIGTERM，Windows 调用 TerminateProcess |
+| `reload` | 不支持（当前没有配置文件），返回非 0 |
 | `help` | 显示帮助 |
+
+> `cyctron.pid` 在启动目录生成，已加入 `.gitignore`；`stop` 需要在同一目录执行。
+> `SIGINT`/`SIGTERM` 会触发主循环退出，并按逆序清理 worker、realtime、NNG 与 mongoose。
 
 ## 2. 端口与监听地址
 
@@ -27,17 +31,18 @@
 
 | 目录 | 用途 | 是否入库 |
 | --- | --- | --- |
-| `web/` | 静态文件根目录 | 否（`.gitignore`） |
-| `libary/` | sys 能力库动态库 | 否 |
-| `plugins/` | 设计插件安装目录（`plugins/<name>/`） | 否 |
-| `core/` | soket 插件（`libsoket_demo`） | 否 |
-| `test-results/` | 压力测试结果 | 否 |
+| `.dytes/` | 本地测试环境（构建产物、`libary`、`web` 夹具、dytes test 目录） | 否 |
+| `web/` | 可选静态资源目录 | 否（`.gitignore`） |
+| `libary/` | 运行时能力库动态库 | 否 |
+| `core/` | soket 插件（`soket_demo`） | 否 |
+| `docs/results/` | 压力测试结果归档 | 是 |
 | `build*/` | 构建目录 | 否 |
 
 静态文件规则：
 
-- `/` 或无后缀 → `web/index.html`
-- 带后缀 → `web/<uri>`
+- `/`、`/index.html` → 优先 `web/index.html`，不存在时返回内置首页
+- 带后缀或 `/assets/*` → `web/<uri>`，缺失返回 404
+- 无后缀页面路由 → 先尝试 libary 插件；非插件且 `Accept: text/html` 时回退首页
 
 ## 4. 平台路径（include/global.h）
 
@@ -46,26 +51,12 @@
 | `PATH_SEP` | `\` | `/` | `/` |
 | `WEB_ROOT` | `.\web` | `./web` | `./web` |
 | `LIBARY_DIR` | `.\libary` | `./libary` | `./libary` |
-| `PLUGINS_DIR` | `.\plugins` | `./plugins` | `./plugins` |
 | `FFI_EXT` | `.dll` | `.so` | `.dylib` |
 
-## 5. 编译宏（include/config.h）
+## 5. 编译宏
 
-| 宏 | 默认 | 说明 |
-| --- | --- | --- |
-| `CT_ENABLE_LOG` | 1 | 日志开关 |
-| `CT_IO_SIZE` | 512 | I/O 缓冲 |
-| `CT_MAX_RECV_SIZE` | 3 MB | 最大接收/请求体上限 |
-| `CT_MAX_HTTP_HEADERS` | 30 | 最大头部数 |
-| `CT_HTTP_INDEX` | `index.html` | 目录默认页 |
-| `CT_PATH_MAX` | PATH_MAX/128 | 路径长度 |
-| `CT_SOCK_LISTEN_BACKLOG_SIZE` | 128 | listen backlog |
-| `CT_ENABLE_MD5` | 1 | MD5 |
-| `CT_ENABLE_CHACHA20` | 1 | ChaCha20 |
-| `CT_ENABLE_TCPIP` | 0 | 内建网络栈（未启用） |
-
-> 说明：`config.h` 中保留了 mongoose/嵌入式网络栈的历史宏，
-> 当前主程序实际使用的是 `crates/mongoose` 与系统 socket。
+主程序没有集中的 `config.h`；平台路径/扩展名由 `include/global.h` 控制，
+请求体上限由 mongoose 默认配置决定。
 
 ## 6. CORS
 
@@ -81,7 +72,7 @@ Access-Control-Allow-Origin: *
 
 | 变量 | 作用 | 使用方 |
 | --- | --- | --- |
-| `STRESS_REPORT_DIR` | 压力测试结果目录 | `tests/stress_report.h`（`socket` 分支） |
+| `STRESS_REPORT_DIR` | 压力测试结果目录 | `tests/stress_report.h` |
 
 ## 8. 日志
 
@@ -96,13 +87,16 @@ Access-Control-Allow-Origin: *
 ```json
 {
   "name": "cyctron",
-  "version": "1.0.2",
+  "version": "1.0.19",
   "description": "local http server",
   "type": "core",
-  "exports": {
-    "./build/release/cyctron.exe": "cyctron.exe"
+  "platform-exports": {
+    "windows": { "./.dytes/cyctron.exe": "cyctron.exe" },
+    "linux": { "./.dytes/cyctron": "cyctron.bin" },
+    "macos": { "./.dytes/cyctron": "cyctron.app" }
   }
 }
 ```
 
-CI（`.github/workflows/`）读取该文件中的版本号，构建后上传到又拍云 S3。
+发布 workflow `.github/workflows/dytes-release.yml` 在 tag 触发时读取该文件，
+按平台构建后调用 `dytes publish`。

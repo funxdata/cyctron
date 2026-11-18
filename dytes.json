@@ -1,7 +1,7 @@
 {
   "name": "cyctron",
   "uuid": "a3d837fd-da48-469a-8c1a-6424402e24d8",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "local http server",
   "keywords": [
     "cyctron",
@@ -12,13 +12,13 @@
   "license": "MIT",
   "platform-exports": {
     "windows": {
-      "./cyctron.exe": "cyctron.exe"
+      "./.dytes/cyctron.exe": "cyctron.exe"
     },
     "linux": {
-      "./cyctron": "cyctron.bin"
+      "./.dytes/cyctron": "cyctron.bin"
     },
     "macos": {
-      "./cyctron": "cyctron.app"
+      "./.dytes/cyctron": "cyctron.app"
     }
   }
 }

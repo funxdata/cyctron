@@ -13,9 +13,9 @@
 #include "../include/handler_sse.h"
 
 #ifdef _WIN32
-#define SSE_PLUGIN "./libary/sse_demo.dll"
+#define SSE_PLUGIN "./.dytes/libary/sse_demo.dll"
 #else
-#define SSE_PLUGIN "./libary/sse_demo.so"
+#define SSE_PLUGIN "./.dytes/libary/sse_demo.so"
 #endif
 
 static int passed = 0, failed = 0;
@@ -33,6 +33,13 @@ static void check(int cond, const char *name, const char *detail) {
 static char *call(const char *symbol, const char *json_in, int *rc) {
     char *out = NULL;
     *rc = call_local_dyn_libffi(SSE_PLUGIN, symbol, json_in, &out);
+    return out;
+}
+
+static char *call_v2(const char *symbol, const char *json_in, int *rc) {
+    char *out = NULL;
+    size_t len = 0;
+    *rc = call_local_dyn_libffi_v2(SSE_PLUGIN, symbol, json_in, &out, &len);
     return out;
 }
 
@@ -56,6 +63,13 @@ static void test_format(void) {
     check(contains(buf, "event: tick\n"), "contains event line", buf);
     check(contains(buf, "data: {\"seq\":7}\n\n"), "contains data + blank line", buf);
 
+    n = sse_format_event(buf, sizeof(buf), 9, "tick", "line1\nline2");
+    check(n > 0 && contains(buf, "data: line1\ndata: line2\n\n"),
+          "multi-line data split", buf);
+
+    n = sse_format_event(buf, sizeof(buf), 9, "a\nb", "{}");
+    check(n > 0 && contains(buf, "event: a b\n"), "event newline sanitized", buf);
+
     char small[16];
     n = sse_format_event(small, sizeof(small), 123456789, "tick", "{}");
     check(n == -1, "truncation returns -1", "");
@@ -71,19 +85,19 @@ static void test_plugin(void) {
           "process_init returns config", out);
     free(out);
 
-    out = call("sse_next", "{\"after_id\":0}", &rc);
+    out = call_v2("sse_next_v2", "{\"after_id\":0}", &rc);
     long id1 = extract_id(out);
     check(rc == 0 && id1 == 1 && contains(out, "\"event\":\"tick\"") &&
           contains(out, "\"data\""),
           "first sse_next id=1", out);
     free(out);
 
-    out = call("sse_next", "{\"after_id\":0}", &rc);
+    out = call_v2("sse_next_v2", "{\"after_id\":0}", &rc);
     long id2 = extract_id(out);
     check(rc == 0 && id2 == id1 + 1, "second sse_next increments id", out);
     free(out);
 
-    out = call("sse_next", "{\"after_id\":100}", &rc);
+    out = call_v2("sse_next_v2", "{\"after_id\":100}", &rc);
     long id3 = extract_id(out);
     check(rc == 0 && id3 > 100, "after_id is honored", out);
     free(out);

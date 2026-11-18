@@ -15,7 +15,7 @@ extern "C" {
 bool event_pusher_init(void);
 void event_pusher_cleanup(void);
 
-// 核心推送函数（data 须为合法 JSON 值）
+// 核心推送函数（data 须为合法 JSON 值；非法 data 会被丢弃并记录 WARN）
 void event_push(const char *data);
 void event_push_with_type(const char *type, const char *data);
 

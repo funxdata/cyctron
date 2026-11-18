@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.28)
+
+# Windows 7 目标必须在 project() 之前设置；CMAKE_HOST_WIN32 在 project 前可用。
+if(CMAKE_HOST_WIN32)
+    set(CMAKE_SYSTEM_VERSION "6.1" CACHE STRING "" FORCE)
+endif()
+
 project(cyctron C)
 
 set(CMAKE_C_STANDARD 11)
@@ -11,10 +17,6 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # 测试目标污染本项目的 ctest。
 # =====================================================
 if(WIN32)
-    # 目标 Windows 7 及以上，保证产物可在旧系统运行
-    set(CMAKE_SYSTEM_VERSION "6.1" CACHE STRING "" FORCE)
-    set(CMAKE_SYSTEM_NAME "Windows" CACHE STRING "" FORCE)
-
     add_compile_definitions(
         _WIN32_WINNT=0x0601
         WINVER=0x0601
@@ -62,6 +64,7 @@ set(CORE_SOURCES
     src/ws_command.c
     src/ws_worker.c
     src/core/uri.c
+    src/core/json_validate.c
     crates/mongoose/mongoose.c
     crates/log/src/log.c
 )
@@ -186,9 +189,11 @@ target_link_libraries(cyctron PRIVATE
     nng
 )
 
-# 主程序生成到项目主目录（./cyctron 或 ./cyctron.exe），便于直接运行
+# 主程序生成到 .dytes/（本地测试环境），避免污染仓库根目录
+set(CT_BIN_DIR "${CMAKE_SOURCE_DIR}/.dytes")
+file(MAKE_DIRECTORY "${CT_BIN_DIR}")
 set_target_properties(cyctron PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY "${CT_BIN_DIR}"
 )
 
 # =====================================================
@@ -214,8 +219,11 @@ install(
 # =====================================================
 # Tests
 # =====================================================
-enable_testing()
-add_subdirectory(tests)
+option(BUILD_TESTS "Build cyctron tests" ON)
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 
 # =====================================================
 # Build summary

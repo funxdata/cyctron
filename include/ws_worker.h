@@ -4,6 +4,7 @@
 #define WS_WORKER_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,7 +29,7 @@ typedef int (*ws_worker_exec_fn)(const char *lib_path, const char *symbol,
                                  const char *args, char **out);
 
 /* Called from the main loop for each completed call. */
-typedef void (*ws_worker_done_fn)(unsigned long conn_id, const char *json,
+typedef void (*ws_worker_done_fn)(uint64_t conn_id, const char *json,
                                   void *user);
 
 int ws_worker_init(void);
@@ -38,10 +39,11 @@ void ws_worker_shutdown(void);
 void ws_worker_set_exec(ws_worker_exec_fn fn);
 
 /**
- * Queue a call. Returns 0 on success, -1 when the queue is full / invalid.
+ * Queue a call. Returns 0 on success, -1 invalid / out of memory,
+ * -2 queue full or per-connection limit reached.
  * The response is built asynchronously and fetched via ws_worker_drain().
  */
-int ws_worker_submit(unsigned long conn_id, const char *id, const char *lib,
+int ws_worker_submit(uint64_t conn_id, const char *id, const char *lib,
                      const char *symbol, const char *args, long timeout_ms);
 
 /* Drain completed responses (main loop only). Returns number delivered. */

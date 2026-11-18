@@ -1,10 +1,10 @@
 // src/handler_sse.c - Server-Sent Events 端点
 //
 // 支持两种事件源：
-//   1. 默认：./libary/sse_demo.<ext> 的 sse_next，输出 {"id","event","data"}
+//   1. 默认：./libary/sse_demo.<ext> 的 sse_next_v2（ABI v2），输出 {"id","event","data"}
 //   2. 通用：GET /sse?lib=<name>&symbol=<fn>&args=<json>
-//      周期调用插件 <fn>（设计插件取 ./plugins/<name>/，其余回退 ./libary/），
-//      把返回 JSON 原样作为 data
+//      周期调用插件 <fn>（从 ./libary/ 加载），
+//      把返回 JSON 原样作为 data；通用模式目前仍使用旧 2 参数 ABI。
 //
 // 所有发送都在 mongoose 主循环线程内完成（MG_EV_POLL）。
 #include <stdio.h>
@@ -25,7 +25,7 @@
 #define SSE_MAX_INTERVAL_MS 5000
 #define SSE_KEEPALIVE_MS 15000
 #define SSE_DATA_MAX 4096
-#define SSE_EVENT_BUF 8192
+#define SSE_EVENT_BUF (SSE_DATA_MAX * 4)
 #define SSE_ARGS_MAX 1024
 #define SSE_LIB_MAX 64
 #define SSE_SYMBOL_MAX 128
@@ -60,10 +60,8 @@ static int sse_safe_name(const char *s) {
 }
 
 static void sse_lib_path(const char *lib, char *out, size_t out_size) {
-    // 设计插件优先 ./plugins/<name>/，sys 能力库回退 ./libary/
-    if (plugin_resolve_path(lib, out, out_size) != 0) {
-        snprintf(out, out_size, "%s%s%s%s", LIBARY_DIR, PATH_SEP, lib, FFI_EXT);
-    }
+    // 只从 ./libary/ 查找；失败时保留候选路径，由 fopen 检查
+    plugin_resolve_path(lib, out, out_size);
 }
 
 static void sse_plugin_path(char *out, size_t out_size) {
@@ -85,10 +83,39 @@ int sse_format_event(char *out, size_t out_size, long id,
     if (!event || !*event) event = "message";
     if (!data) data = "null";
 
-    int n = snprintf(out, out_size, "id: %ld\nevent: %s\ndata: %s\n\n",
-                     id, event, data);
+    size_t o = 0;
+    int n = snprintf(out, out_size, "id: %ld\nevent: ", id);
     if (n < 0 || (size_t) n >= out_size) return -1;
-    return n;
+    o = (size_t) n;
+
+    /* event 必须是单行：过滤 CR/LF，避免破坏 SSE 帧 */
+    for (const char *p = event; *p; p++) {
+        char ch = (*p == '\r' || *p == '\n') ? ' ' : *p;
+        if (o + 1 >= out_size) return -1;
+        out[o++] = ch;
+    }
+    if (o + 1 >= out_size) return -1;
+    out[o++] = '\n';
+
+    /* data 按 SSE 规范逐行输出，每行加 "data: " 前缀 */
+    const char *p = data;
+    for (;;) {
+        const char *eol = strchr(p, '\n');
+        size_t len = eol ? (size_t)(eol - p) : strlen(p);
+        if (o + 6 + len + 2 > out_size) return -1;
+        memcpy(out + o, "data: ", 6);
+        o += 6;
+        memcpy(out + o, p, len);
+        o += len;
+        out[o++] = '\n';
+        if (!eol) break;
+        p = eol + 1;
+    }
+
+    if (o + 2 > out_size) return -1;
+    out[o++] = '\n';
+    out[o] = '\0';
+    return (int) o;
 }
 
 // 通用模式：调用指定插件符号，把输出原样作为 data
@@ -108,7 +135,11 @@ static int sse_send_custom(sse_client_t *cl) {
 
     char data_buf[SSE_DATA_MAX];
     size_t dlen = strlen(json_out);
-    if (dlen >= sizeof(data_buf)) dlen = sizeof(data_buf) - 1;
+    if (dlen >= sizeof(data_buf)) {
+        log_warn("[SSE] %s/%s output truncated (%zu bytes, limit %zu)",
+                 cl->lib, cl->symbol, dlen, sizeof(data_buf) - 1);
+        dlen = sizeof(data_buf) - 1;
+    }
     memcpy(data_buf, json_out, dlen);
     data_buf[dlen] = '\0';
 
@@ -138,7 +169,7 @@ static int sse_send_event(sse_client_t *cl) {
     snprintf(json_in, sizeof(json_in), "{\"after_id\":%ld}", cl->last_id);
 
     char *json_out = NULL;
-    int rc = call_local_dyn_libffi(plugin, "sse_next", json_in, &json_out);
+    int rc = call_local_dyn_libffi_v2(plugin, "sse_next_v2", json_in, &json_out, NULL);
     if (rc != 0 || !json_out) {
         free(json_out);
         log_warn("[SSE] sse_next failed (rc=%d, plugin=%s)", rc, plugin);
@@ -157,6 +188,10 @@ static int sse_send_event(sse_client_t *cl) {
 
     char data_buf[SSE_DATA_MAX];
     size_t dlen = data.len < sizeof(data_buf) - 1 ? data.len : sizeof(data_buf) - 1;
+    if (data.len >= sizeof(data_buf)) {
+        log_warn("[SSE] sse_next output truncated (%zu bytes, limit %zu)",
+                 data.len, sizeof(data_buf) - 1);
+    }
     if (dlen > 0 && data.buf) {
         memcpy(data_buf, data.buf, dlen);
     }
@@ -171,6 +206,7 @@ static int sse_send_event(sse_client_t *cl) {
     if (n > 0) {
         mg_send(cl->c, buf, (size_t) n);
         cl->last_id = id;
+        if (cl->once) cl->done = 1;
     }
 
     mg_free(event);
@@ -187,6 +223,13 @@ void sse_on_poll(struct mg_connection *c) {
     if (now - cl->last_poll_ms >= (uint64_t) cl->interval_ms) {
         cl->last_poll_ms = now;
         sse_send_event(cl);
+    }
+
+    /* once 模式发送完成：结束响应并释放槽位 */
+    if (cl->once && cl->done) {
+        c->is_draining = 1;
+        memset(cl, 0, sizeof(*cl));
+        return;
     }
 
     if (now - cl->last_ping_ms >= SSE_KEEPALIVE_MS) {
@@ -323,6 +366,12 @@ void ev_handler_sse(struct mg_connection *c, int ev, void *ev_data) {
 
         log_info("[SSE] client connected (slot=%d, lib=%s, symbol=%s, custom=%d, once=%d, interval=%d)",
                  slot, cl->lib, cl->symbol, cl->custom, cl->once, interval);
+
+        /* once 模式在首条事件发送后即可结束响应 */
+        if (cl->once && cl->done) {
+            c->is_draining = 1;
+            memset(cl, 0, sizeof(*cl));
+        }
         return;
     }
 

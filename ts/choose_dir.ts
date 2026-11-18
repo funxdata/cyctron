@@ -7,7 +7,7 @@
 // 说明：
 //   - 请求会阻塞在系统目录选择对话框，直到选择或取消。
 //   - 使用 once=1，避免 SSE 周期调用反复弹窗。
-//   - 选择完成/取消后检查 /api/status，确认 cyctron 仍可响应。
+//   - 选择完成/取消后检查 /，确认 cyctron 仍可响应。
 
 const port = Deno.args[0] ?? "44944";
 const timeoutSec = Number(Deno.args[1] ?? "120");
@@ -117,12 +117,12 @@ async function checkService(): Promise<boolean> {
     try {
       const conn = await Deno.connect({ hostname: "127.0.0.1", port: Number(port) });
       await conn.write(encoder.encode(
-        "GET /api/status HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
       ));
       const buf = new Uint8Array(2048);
       const n = await conn.read(buf);
       conn.close();
-      if (n && decoder.decode(buf.subarray(0, n)).includes("\"status\":\"running\"")) {
+      if (n && decoder.decode(buf.subarray(0, n)).includes("200 OK")) {
         return true;
       }
     } catch {

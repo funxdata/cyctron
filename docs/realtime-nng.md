@@ -123,8 +123,9 @@ event_push_json_string("msg", "hello");
 
 - `rt_create_task` 忽略调用方传入的 `socket_path`，自行生成
   `/tmp/cyctron_<uuid>.sock`；与 `handler_ws.c` 传入的路径不一致。
-- `rt_run`（心跳/超时）没有调用点，`heartbeat_timeout`、`max_restarts` 未生效。
-- `rt_get_task_count`、`rt_find_task_by_uuid` 未加锁。
+- `rt_run` 保留空实现；心跳/超时未启用，`heartbeat_timeout`、`max_restarts` 已移除。
+- 任务表访问均加锁；所有链表遍历在 `g_scheduler.mutex` 内完成，
+  事件发送（`event_push`）移到锁外，锁层级固定为 scheduler → ws。
 - 任务表释放后指针失效，调用方需避免持有过期 `rt_task_t*`。
 - PUB/SUB 是尽力而为：突发流量下可能丢消息（压测中观察到高丢失率）。
 - Rust `soket_demo` 的 runtime 是进程级单例，同一插件无法运行多个 uuid。
@@ -144,14 +145,13 @@ event_push_json_string("msg", "hello");
 
 ```bash
 # 使用 nngcat（如果构建了 nng 工具）
-./build-sse/crates/nng/tools/nngcat/nngcat.exe --sub --dial ipc:///tmp/cyctron.sock
+./build/crates/nng/tools/nngcat/nngcat.exe --sub --dial ipc:///tmp/cyctron.sock
 ```
 
 或在 Rust 中使用 `nng_sub0_open` + `nng_dial` + 订阅空前缀。
 
 ## 8. 测试
 
-- `tests/test_nng_ipc.c`：PUB/SUB 演示（无限循环，不注册 ctest）。
-- `socket` 分支提供 `tests/test_nng_stress.c`：
-  PAIR1 可靠通道 + PUB/SUB 尽力而为吞吐测试，结果写入 `test-results/stress.jsonl`。
-- `tests/test_realtime.c` 等旧测试使用已移除的 API，尚未迁移。
+- `tests/test_nng_stress.c`：PAIR1 可靠通道 + PUB/SUB 尽力而为吞吐测试，
+  结果写入 `docs/results/stress.jsonl`。
+- 旧 NNG 演示与 realtime 测试已移除。

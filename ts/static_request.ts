@@ -171,10 +171,9 @@ console.log("== 状态码/边界 ==");
 
 await checkStatus("404: missing json", "/assets/json/nope.json", { status: 404 });
 await checkStatus("404: missing dir index", "/assets/nothere/", { status: 404 });
-await checkStatus("api: /api/status", "/api/status", {
+await checkStatus("health: /", "/", {
   status: 200,
-  type: "application/json",
-  bodyIncludes: "running",
+  type: "text/html",
 });
 
 // Deno fetch 会规范化 /../，用原始 TCP 发送未规范化路径验证服务端拒绝

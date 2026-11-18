@@ -15,7 +15,7 @@
 #endif
 
 typedef struct ws_job {
-    unsigned long conn_id;
+    uint64_t conn_id;
     char *id;
     char *lib;
     char *symbol;
@@ -26,10 +26,13 @@ typedef struct ws_job {
 } ws_job_t;
 
 typedef struct ws_done {
-    unsigned long conn_id;
+    uint64_t conn_id;
     char *json;
     struct ws_done *next;
 } ws_done_t;
+
+/* 主循环未及时 drain 时的结果队列上限，超出直接丢弃并告警。 */
+#define WS_WORKER_MAX_DONE 256
 
 static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_cond = PTHREAD_COND_INITIALIZER;
@@ -39,12 +42,18 @@ static ws_job_t *g_head = NULL;
 static ws_job_t *g_tail = NULL;
 static ws_done_t *g_done_head = NULL;
 static ws_done_t *g_done_tail = NULL;
+static int g_done_len = 0;
 static int g_queue_len = 0;
 static int g_running = 0;
 static int g_inited = 0;
 static pthread_t g_threads[WS_WORKER_THREADS];
 static int g_thread_count = 0;
-static ws_worker_exec_fn g_exec = call_local_dyn_libffi;
+static int ws_exec_v2(const char *lib_path, const char *symbol,
+                      const char *args, char **out) {
+    return call_local_dyn_libffi_v2(lib_path, symbol, args, out, NULL);
+}
+
+static ws_worker_exec_fn g_exec = ws_exec_v2;
 #define WS_CONN_LOCKS 16
 static ws_worker_stats_t g_stats;
 static int g_conn_pending[WS_CONN_LOCKS];
@@ -86,7 +95,7 @@ static void job_free(ws_job_t *job) {
     free(job);
 }
 
-static void push_done(unsigned long conn_id, char *json) {
+static void push_done(uint64_t conn_id, char *json) {
     if (!json) return;
     ws_done_t *d = (ws_done_t *)calloc(1, sizeof(*d));
     if (!d) {
@@ -97,9 +106,17 @@ static void push_done(unsigned long conn_id, char *json) {
     d->json = json;
 
     pthread_mutex_lock(&g_mutex);
+    if (g_done_len >= WS_WORKER_MAX_DONE) {
+        pthread_mutex_unlock(&g_mutex);
+        log_warn("[WS] done queue full (%d), drop call result", WS_WORKER_MAX_DONE);
+        free(json);
+        free(d);
+        return;
+    }
     if (g_done_tail) g_done_tail->next = d;
     else g_done_head = d;
     g_done_tail = d;
+    g_done_len++;
     pthread_mutex_unlock(&g_mutex);
 }
 
@@ -111,8 +128,9 @@ static void record_result(int mapped, unsigned long long elapsed, int timed_out)
         g_stats.failed++;
         if (timed_out) g_stats.timeouts++;
     }
-    g_stats.total_us += elapsed;
-    if (elapsed > g_stats.max_us) g_stats.max_us = elapsed;
+    unsigned long long elapsed_us = elapsed * 1000;
+    g_stats.total_us += elapsed_us;
+    if (elapsed_us > g_stats.max_us) g_stats.max_us = elapsed_us;
     pthread_mutex_unlock(&g_mutex);
 }
 
@@ -146,16 +164,23 @@ static void *worker_loop(void *arg) {
             rc = -7;
         } else {
             char path[512];
+            char symbol_v2[WS_CALL_MAX_NAME + 4];
+            snprintf(symbol_v2, sizeof(symbol_v2), "%s_v2", job->symbol);
             /* 未找到时 plugin_resolve_path 仍写入 ./libary/<lib><ext> 候选路径，
              * 交给执行器 dlopen，保持“库不存在 → rc=-1”的旧语义。 */
             plugin_resolve_path(job->lib, path, sizeof(path));
-            pthread_mutex_t *lock = &g_conn_locks[job->conn_id % WS_CONN_LOCKS];
+            pthread_mutex_t *lock = &g_conn_locks[(int)(job->conn_id % WS_CONN_LOCKS)];
             pthread_mutex_lock(lock);
-            rc = g_exec ? g_exec(path, job->symbol, job->args, &out) : -1;
+            rc = g_exec ? g_exec(path, symbol_v2, job->args, &out) : -1;
             pthread_mutex_unlock(lock);
         }
 
         unsigned long long elapsed = now_ms() - start;
+        /* 插件执行无法被安全抢占；执行完成后若超过 timeout_ms，仍标记为超时。 */
+        if (!timed_out && job->timeout_ms > 0 &&
+            elapsed > (unsigned long long)job->timeout_ms) {
+            timed_out = 1;
+        }
         int mapped = timed_out ? -7 : ws_call_map_rc(rc);
 
         ws_call_resp_t resp;
@@ -165,7 +190,7 @@ static void *worker_loop(void *arg) {
         } else {
             char msg[128];
             if (timed_out) {
-                snprintf(msg, sizeof(msg), "call timed out in queue");
+                snprintf(msg, sizeof(msg), "call timed out");
             } else {
                 snprintf(msg, sizeof(msg), "ffi rc=%d", rc);
             }
@@ -261,6 +286,7 @@ void ws_worker_shutdown(void) {
         d = next;
     }
     g_done_head = g_done_tail = NULL;
+    g_done_len = 0;
     g_inited = 0;
     pthread_mutex_unlock(&g_mutex);
     log_info("[WS] worker stopped");
@@ -270,7 +296,7 @@ void ws_worker_set_exec(ws_worker_exec_fn fn) {
     g_exec = fn;
 }
 
-int ws_worker_submit(unsigned long conn_id, const char *id, const char *lib,
+int ws_worker_submit(uint64_t conn_id, const char *id, const char *lib,
                      const char *symbol, const char *args, long timeout_ms) {
     if (!id || !lib || !symbol) return -1;
     if (ws_worker_init() != 0) return -1;
@@ -298,7 +324,7 @@ int ws_worker_submit(unsigned long conn_id, const char *id, const char *lib,
         g_stats.busy++;
         pthread_mutex_unlock(&g_mutex);
         job_free(job);
-        return -1;
+        return -2;
     }
 
     if (g_tail) g_tail->next = job;
@@ -318,6 +344,7 @@ int ws_worker_drain(ws_worker_done_fn cb, void *user) {
     pthread_mutex_lock(&g_mutex);
     ws_done_t *d = g_done_head;
     g_done_head = g_done_tail = NULL;
+    g_done_len = 0;
     pthread_mutex_unlock(&g_mutex);
 
     int n = 0;

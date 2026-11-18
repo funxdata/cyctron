@@ -1,13 +1,13 @@
 #include "realtime.h"
 #include "event_pusher.h"
 #include "calldyn.h"
+#include "plugin_path.h"
 #include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <stdarg.h>
 #include <nng/nng.h>
@@ -21,8 +21,6 @@ typedef struct rt_task_node {
     nng_socket nng_sock;
     int nng_initialized;
     time_t created_at;
-    time_t last_heartbeat;
-    int restart_count;
 } rt_task_node_t;
 
 static struct {
@@ -30,15 +28,11 @@ static struct {
     int count;
     int running;
     pthread_mutex_t mutex;
-    int max_restarts;
-    int heartbeat_timeout;
 } g_scheduler = {
     .tasks = NULL,
     .count = 0,
     .running = 0,
-    .mutex = PTHREAD_MUTEX_INITIALIZER,
-    .max_restarts = 3,
-    .heartbeat_timeout = 30
+    .mutex = PTHREAD_MUTEX_INITIALIZER
 };
 
 static uint64_t g_counter = 0;
@@ -47,10 +41,12 @@ static uint64_t g_counter = 0;
 
 static void gen_id(char *id, size_t size) {
     uint64_t n = __sync_fetch_and_add(&g_counter, 1);
-    snprintf(id, size, "task_%lu_%lu", (unsigned long)time(NULL), (unsigned long)n);
+    snprintf(id, size, "task_%llu_%llu",
+             (unsigned long long)time(NULL), (unsigned long long)n);
 }
 
-static rt_task_node_t* find_node(const char *uuid) {
+// 调用者必须持有 g_scheduler.mutex
+static rt_task_node_t* find_node_locked(const char *uuid) {
     rt_task_node_t *n = g_scheduler.tasks;
     while (n) {
         if (strcmp(n->task.uuid, uuid) == 0) return n;
@@ -90,7 +86,7 @@ rt_task_t* rt_create_task(rt_manager_t *mgr, const char *uuid, const char *socke
     
     pthread_mutex_lock(&g_scheduler.mutex);
     
-    if (find_node(uuid)) {
+    if (find_node_locked(uuid)) {
         pthread_mutex_unlock(&g_scheduler.mutex);
         log_warn("[Scheduler] Task %s exists", uuid);
         return NULL;
@@ -105,8 +101,6 @@ rt_task_t* rt_create_task(rt_manager_t *mgr, const char *uuid, const char *socke
     memset(&node->nng_sock, 0, sizeof(nng_socket));
     node->nng_initialized = 0;
     node->created_at = time(NULL);
-    node->last_heartbeat = time(NULL);
-    node->restart_count = 0;
     
     gen_id(node->task.task_id, sizeof(node->task.task_id));
     strncpy(node->task.uuid, uuid, sizeof(node->task.uuid) - 1);
@@ -127,17 +121,26 @@ rt_task_t* rt_create_task(rt_manager_t *mgr, const char *uuid, const char *socke
     node->next = g_scheduler.tasks;
     g_scheduler.tasks = node;
     g_scheduler.count++;
-    
-    log_info("[Scheduler] Created: %s (uuid: %s, socket: %s)", 
-             node->task.task_id, uuid, node->task.socket_id);
-    send_rt_event("create", uuid, "created");
-    
+
+    char task_id[sizeof(node->task.task_id)];
+    char socket_id[sizeof(node->task.socket_id)];
+    memcpy(task_id, node->task.task_id, sizeof(task_id));
+    memcpy(socket_id, node->task.socket_id, sizeof(socket_id));
     pthread_mutex_unlock(&g_scheduler.mutex);
+
+    log_info("[Scheduler] Created: %s (uuid: %s, socket: %s)",
+             task_id, uuid, socket_id);
+    send_rt_event("create", uuid, "created");
     return &node->task;
 }
 
 int rt_start_task(rt_task_t *task, const char *lib_name) {
     if (!task) return -1;
+    const char *lib = lib_name ? lib_name : "soket_demo";
+    if (!plugin_name_is_safe(lib)) {
+        log_error("[Scheduler] invalid lib name: %s", lib);
+        return -1;
+    }
     if (task->status == RT_TASK_RUNNING) {
         log_warn("[Scheduler] Task %s already running", task->uuid);
         return 0;
@@ -169,8 +172,7 @@ int rt_start_task(rt_task_t *task, const char *lib_name) {
     
     // 构建调用参数
     char json_in[512];
-    const char *lib = lib_name ? lib_name : "libsoket_demo";
-    
+
     snprintf(socket_url, sizeof(socket_url), "ipc://%s", task->socket_id);
     
     snprintf(json_in, sizeof(json_in), 
@@ -184,7 +186,6 @@ int rt_start_task(rt_task_t *task, const char *lib_name) {
     
     if (ret == 0) {
         task->status = RT_TASK_RUNNING;
-        node->last_heartbeat = time(NULL);
         log_info("[Scheduler] Started: %s", task->uuid);
         if (json_out) {
             log_info("[Scheduler] Output: %s", json_out);
@@ -200,40 +201,44 @@ int rt_start_task(rt_task_t *task, const char *lib_name) {
     return -1;
 }
 
-int rt_remove_task(rt_task_t *task) {
-    if (!task) return -1;
-    
-    rt_task_node_t *node = (rt_task_node_t*)task;
-    
-    pthread_mutex_lock(&g_scheduler.mutex);
-    rt_task_node_t *prev = NULL, *cur = g_scheduler.tasks;
-    while (cur) {
-        if (cur == node) {
-            if (prev) prev->next = cur->next;
-            else g_scheduler.tasks = cur->next;
-            g_scheduler.count--;
-            break;
-        }
-        prev = cur;
-        cur = cur->next;
-    }
-    pthread_mutex_unlock(&g_scheduler.mutex);
-    
-    if (!cur) return -1;
-    
+// 从链表摘除后调用；不持有 g_scheduler.mutex
+static void node_destroy(rt_task_node_t *node, const char *action) {
+    if (!node) return;
     if (node->nng_initialized) {
         nng_close(node->nng_sock);
         node->nng_initialized = 0;
     }
-    
-    task->status = RT_TASK_STOPPED;
-    log_info("[Scheduler] Removed: %s", task->uuid);
-    send_rt_event("remove", task->uuid, "stopped");
-    
-    if (task->on_cleanup) task->on_cleanup(task);
-    if (task->user_data) { free(task->user_data); task->user_data = NULL; }
+    node->task.status = RT_TASK_STOPPED;
+    log_info("[Scheduler] Removed: %s", node->task.uuid);
+    if (action) send_rt_event(action, node->task.uuid, "stopped");
+    if (node->task.on_cleanup) node->task.on_cleanup(&node->task);
+    if (node->task.user_data) {
+        free(node->task.user_data);
+        node->task.user_data = NULL;
+    }
     free(node);
-    
+}
+
+int rt_remove_task(rt_task_t *task) {
+    if (!task) return -1;
+    rt_task_node_t *node = (rt_task_node_t *) task;
+    int found = 0;
+
+    pthread_mutex_lock(&g_scheduler.mutex);
+    rt_task_node_t **pp = &g_scheduler.tasks;
+    while (*pp) {
+        if (*pp == node) {
+            *pp = node->next;
+            g_scheduler.count--;
+            found = 1;
+            break;
+        }
+        pp = &(*pp)->next;
+    }
+    pthread_mutex_unlock(&g_scheduler.mutex);
+
+    if (!found) return -1;
+    node_destroy(node, "remove");
     return 0;
 }
 
@@ -248,8 +253,11 @@ int rt_stop_task(rt_task_t *task) {
 
 rt_task_t* rt_find_task_by_uuid(rt_manager_t *mgr, const char *uuid) {
     (void)mgr;
-    rt_task_node_t *n = find_node(uuid);
-    return n ? &n->task : NULL;
+    pthread_mutex_lock(&g_scheduler.mutex);
+    rt_task_node_t *n = find_node_locked(uuid);
+    rt_task_t *task = n ? &n->task : NULL;
+    pthread_mutex_unlock(&g_scheduler.mutex);
+    return task;
 }
 
 int rt_send_msg(rt_task_t *task, const char *data) {
@@ -270,105 +278,107 @@ int rt_send_msg(rt_task_t *task, const char *data) {
 void rt_broadcast(rt_manager_t *mgr, const char *data, size_t len) {
     (void)mgr;
     if (!data) return;
-    
+
+    /* 锁内只做快照，事件发送放到锁外，避免 scheduler → ws 的锁嵌套。 */
     pthread_mutex_lock(&g_scheduler.mutex);
-    rt_task_node_t *n = g_scheduler.tasks;
-    while (n) {
-        if (n->task.status == RT_TASK_RUNNING) {
-            char msg[512];
-            snprintf(msg, sizeof(msg), "{\"target\":\"%s\",\"data\":%.*s}", 
-                     n->task.uuid, (int)len, data);
-            event_push_with_type("broadcast", msg);
+    int cap = g_scheduler.count;
+    char (*uuids)[64] = cap > 0 ? malloc((size_t) cap * sizeof(*uuids)) : NULL;
+    int n = 0;
+    if (uuids) {
+        for (rt_task_node_t *cur = g_scheduler.tasks; cur && n < cap; cur = cur->next) {
+            if (cur->task.status == RT_TASK_RUNNING) {
+                memcpy(uuids[n], cur->task.uuid, sizeof(uuids[n]));
+                uuids[n][sizeof(uuids[n]) - 1] = '\0';
+                n++;
+            }
         }
-        n = n->next;
     }
     pthread_mutex_unlock(&g_scheduler.mutex);
+
+    for (int i = 0; i < n; i++) {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "{\"target\":\"%s\",\"data\":%.*s}",
+                 uuids[i], (int) len, data);
+        event_push_with_type("broadcast", msg);
+    }
+    free(uuids);
     log_info("[Scheduler] Broadcasted");
 }
 
 rt_task_status_t rt_get_task_status(const rt_task_t *task) {
-    return task ? task->status : RT_TASK_ERROR;
+    if (!task) return RT_TASK_ERROR;
+    pthread_mutex_lock(&g_scheduler.mutex);
+    rt_task_status_t status = task->status;
+    pthread_mutex_unlock(&g_scheduler.mutex);
+    return status;
 }
 
 int rt_get_task_count(rt_manager_t *mgr) {
     (void)mgr;
-    return g_scheduler.count;
+    pthread_mutex_lock(&g_scheduler.mutex);
+    int count = g_scheduler.count;
+    pthread_mutex_unlock(&g_scheduler.mutex);
+    return count;
 }
 
 void rt_run(rt_manager_t *mgr) {
     (void)mgr;
-    time_t now = time(NULL);
-    
-    pthread_mutex_lock(&g_scheduler.mutex);
-    rt_task_node_t *n = g_scheduler.tasks;
-    while (n) {
-        if (n->task.status == RT_TASK_RUNNING) {
-            if (now - n->last_heartbeat > g_scheduler.heartbeat_timeout) {
-                log_warn("[Scheduler] Task %s heartbeat timeout!", n->task.uuid);
-                send_rt_event("heartbeat_timeout", n->task.uuid, "timeout");
-            }
-        }
-        n = n->next;
-    }
-    pthread_mutex_unlock(&g_scheduler.mutex);
-    usleep(100000);
+    /* 保留 API 兼容：心跳/超时循环当前未启用（没有可靠的心跳来源）。 */
 }
 
-void rt_stop(rt_manager_t *mgr) { 
-    (void)mgr; 
-    g_scheduler.running = 0; 
+void rt_stop(rt_manager_t *mgr) {
+    (void)mgr;
+    pthread_mutex_lock(&g_scheduler.mutex);
+    g_scheduler.running = 0;
+    pthread_mutex_unlock(&g_scheduler.mutex);
     log_info("[Scheduler] Stopped");
 }
 
 
-int rt_remove_tasks_by_conn(rt_manager_t *mgr, unsigned long conn_id) {
+int rt_remove_tasks_by_conn(rt_manager_t *mgr, uint64_t conn_id) {
     (void)mgr;
-    rt_task_t **victims = NULL;
-    int n = 0, cap = 0;
+    rt_task_node_t *victims = NULL;
 
     pthread_mutex_lock(&g_scheduler.mutex);
-    for (rt_task_node_t *cur = g_scheduler.tasks; cur; cur = cur->next) {
-        if (cur->task.conn_id != conn_id) continue;
-        if (n == cap) {
-            int new_cap = cap ? cap * 2 : 8;
-            rt_task_t **tmp = realloc(victims, sizeof(*victims) * (size_t)new_cap);
-            if (!tmp) break;
-            victims = tmp;
-            cap = new_cap;
+    rt_task_node_t **pp = &g_scheduler.tasks;
+    while (*pp) {
+        rt_task_node_t *cur = *pp;
+        if (cur->task.conn_id == conn_id) {
+            *pp = cur->next;
+            cur->next = victims;
+            victims = cur;
+            g_scheduler.count--;
+        } else {
+            pp = &cur->next;
         }
-        victims[n++] = &cur->task;
     }
     pthread_mutex_unlock(&g_scheduler.mutex);
 
     int removed = 0;
-    for (int i = 0; i < n; i++) {
-        if (rt_remove_task(victims[i]) == 0) removed++;
+    while (victims) {
+        rt_task_node_t *next = victims->next;
+        node_destroy(victims, "remove");
+        victims = next;
+        removed++;
     }
-    free(victims);
     return removed;
 }
 
 void rt_cleanup(rt_manager_t *mgr) {
     (void)mgr;
     pthread_mutex_lock(&g_scheduler.mutex);
-    rt_task_node_t *n = g_scheduler.tasks;
-    while (n) {
-        rt_task_node_t *next = n->next;
-        if (n->task.status == RT_TASK_RUNNING) {
-            send_rt_event("cleanup", n->task.uuid, "stopped");
-        }
-        if (n->nng_initialized) {
-            nng_close(n->nng_sock);
-        }
-        if (n->task.on_cleanup) n->task.on_cleanup(&n->task);
-        if (n->task.user_data) free(n->task.user_data);
-        free(n);
-        n = next;
-    }
+    rt_task_node_t *list = g_scheduler.tasks;
     g_scheduler.tasks = NULL;
     g_scheduler.count = 0;
     g_scheduler.running = 0;
     pthread_mutex_unlock(&g_scheduler.mutex);
+
+    while (list) {
+        rt_task_node_t *next = list->next;
+        const char *action = (list->task.status == RT_TASK_RUNNING) ? "cleanup" : NULL;
+        node_destroy(list, action);
+        list = next;
+    }
     log_info("[Scheduler] Cleanup done");
 }
 

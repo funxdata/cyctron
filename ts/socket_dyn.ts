@@ -14,7 +14,7 @@ export const dyn_init = () => {
   globalThis.funxsocket?.send(JSON.stringify({
     cmd: "bind",
     uuid: "task-001",
-    lib: "libsoket_demo"
+    lib: "soket_demo"
   }));
 };
 

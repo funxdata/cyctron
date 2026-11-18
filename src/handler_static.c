@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include "mongoose.h"
 #include "server.h"
 #include "uri.h"
@@ -36,6 +37,21 @@ static void reply_index_html(struct mg_connection *c) {
         "%s", INDEX_HTML_CONTENT);
 }
 
+// 优先返回磁盘上的 web/index.html；不存在时才使用内置首页
+static void serve_index_html(struct mg_connection *c, struct mg_http_message *hm) {
+    struct stat st;
+    if (stat(WEB_ROOT "/" INDEX_HTML, &st) == 0 && S_ISREG(st.st_mode)) {
+        struct mg_http_serve_opts opts = {0};
+        opts.root_dir = WEB_ROOT;
+        opts.mime_types = "svg=image/svg+xml,json=application/json,"
+                          "js=text/javascript,mjs=text/javascript";
+        opts.fs = &mg_fs_posix;
+        mg_http_serve_file(c, hm, WEB_ROOT "/" INDEX_HTML, &opts);
+        return;
+    }
+    reply_index_html(c);
+}
+
 // 解析静态文件请求 URI 到磁盘相对路径（导出供单元测试）
 // 规则：含 ".." 拒绝；无后缀 → index.html；带后缀 → 原样映射
 // 返回 0 成功，-1 表示非法请求
@@ -57,15 +73,15 @@ int static_resolve_path(const char *uri, char *out, size_t out_size) {
     return 0;
 }
 
-// 判断无后缀 URI 是否允许 SPA fallback（仅页面路由）。
-// /api/*、/soket、/sse 以及带后缀的资源不参与回退。
-int static_should_fallback(const char *uri) {
+// 判断无后缀 URI 是否允许 SPA fallback（仅浏览器 HTML 导航）。
+// /assets、/soket、/sse 以及带后缀的资源不参与回退。
+int static_should_fallback(const char *uri, const char *accept) {
     if (!uri || uri[0] == '\0' || strcmp(uri, "/") == 0) return 0;
     if (has_file_extension(uri)) return 0;
-    if (strcmp(uri, "/api") == 0 || strncmp(uri, "/api/", 5) == 0) return 0;
+    if (strcmp(uri, "/assets") == 0 || strncmp(uri, "/assets/", 8) == 0) return 0;
     if (strcmp(uri, "/soket") == 0) return 0;
     if (strcmp(uri, "/sse") == 0 || strncmp(uri, "/sse?", 5) == 0) return 0;
-    return 1;
+    return accept && strstr(accept, "text/html") != NULL;
 }
 
 void ev_handler_static(struct mg_connection *c, int ev, void *ev_data) {
@@ -79,6 +95,16 @@ void ev_handler_static(struct mg_connection *c, int ev, void *ev_data) {
     // 去掉 query string（静态资源不应带）
     char *q = strchr(uri, '?');
     if (q) *q = '\0';
+
+    char accept[128] = "";
+    const struct mg_str *accept_hdr = mg_http_get_header(hm, "Accept");
+    if (accept_hdr && accept_hdr->len > 0) {
+        size_t n = accept_hdr->len < sizeof(accept) - 1
+                 ? accept_hdr->len
+                 : sizeof(accept) - 1;
+        memcpy(accept, accept_hdr->buf, n);
+        accept[n] = '\0';
+    }
 
     if (uri_has_traversal(uri)) {
         mg_http_reply(c, 400,
@@ -97,16 +123,19 @@ void ev_handler_static(struct mg_connection *c, int ev, void *ev_data) {
         return;
     }
 
-    // 首页与 SPA fallback 统一返回内置 HTML，不再依赖 web/index.html 文件。
-    // 页面路由（/chat 等）交给前端 init 从 URL 恢复。
+    // 首页：优先磁盘 web/index.html，不存在时回退内置 HTML
     if (strcmp(file_path, WEB_ROOT "/" INDEX_HTML) == 0) {
-        reply_index_html(c);
+        serve_index_html(c, hm);
         return;
     }
-    if (static_should_fallback(uri)) {
-        log_debug("[Static] SPA fallback: %s -> builtin index", uri);
-        reply_index_html(c);
-        return;
+    // 无后缀页面路由：web/<uri>/index.html 存在则直接服务；否则 HTML 导航回退首页
+    if (static_should_fallback(uri, accept)) {
+        struct stat st;
+        if (stat(file_path, &st) != 0 || !S_ISREG(st.st_mode)) {
+            log_debug("[Static] SPA fallback: %s -> index", uri);
+            serve_index_html(c, hm);
+            return;
+        }
     }
 
     log_debug("[Static] %s -> %s", uri, file_path);

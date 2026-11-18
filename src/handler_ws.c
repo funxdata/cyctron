@@ -42,10 +42,10 @@ static int ws_conn_register(struct mg_connection *c) {
     }
     pthread_mutex_unlock(&g_ws_conns_mutex);
     if (ok) {
-        log_info("[WS] register conn=%lu", c->id);
+        log_info("[WS] register conn=%llu", (unsigned long long)c->id);
     } else {
-        log_warn("[WS] connection table full (%d), reject conn=%lu",
-                 WS_MAX_CONNS, c->id);
+        log_warn("[WS] connection table full (%d), reject conn=%llu",
+                 WS_MAX_CONNS, (unsigned long long)c->id);
     }
     return ok;
 }
@@ -85,7 +85,7 @@ static void handle_bind(struct mg_connection *c, const ws_command_t *req) {
         return;
     }
 
-    const char *lib = (req->lib && req->lib[0]) ? req->lib : "libsoket_demo";
+    const char *lib = (req->lib && req->lib[0]) ? req->lib : "soket_demo";
 
     char socket_path[128];
     snprintf(socket_path, sizeof(socket_path), "/tmp/cyctron/%s.sock", req->uuid);
@@ -172,22 +172,26 @@ static void handle_call(struct mg_connection *c, const char *data, size_t len) {
         return;
     }
 
-    if (ws_worker_submit(c->id, req.id, req.lib, req.symbol, req.args,
-                         req.timeout_ms) != 0) {
-        log_warn("[WS] call queue full id=%s", req.id ? req.id : "");
+    int ret = ws_worker_submit(c->id, req.id, req.lib, req.symbol, req.args,
+                               req.timeout_ms);
+    if (ret != 0) {
+        int code = (ret == -2) ? -6 : -100;
+        const char *msg = (ret == -2) ? "worker busy" : "invalid call";
+        log_warn("[WS] call rejected id=%s (%s)", req.id ? req.id : "", msg);
         ws_call_resp_t resp;
-        if (ws_call_build_error(req.id, -6, "worker busy", &resp) == 0) {
+        if (ws_call_build_error(req.id, code, msg, &resp) == 0) {
             event_push_to(c, resp.json);
             ws_call_resp_free(&resp);
         }
     } else {
-        log_debug("[WS] call queued id=%s conn=%lu", req.id ? req.id : "", c->id);
+        log_debug("[WS] call queued id=%s conn=%llu",
+                  req.id ? req.id : "", (unsigned long long)c->id);
     }
 
     ws_call_req_free(&req);
 }
 
-static struct mg_connection *ws_conn_find(unsigned long conn_id) {
+static struct mg_connection *ws_conn_find(uint64_t conn_id) {
     struct mg_connection *found = NULL;
     pthread_mutex_lock(&g_ws_conns_mutex);
     for (int i = 0; i < WS_MAX_CONNS; i++) {
@@ -201,17 +205,19 @@ static struct mg_connection *ws_conn_find(unsigned long conn_id) {
         }
     }
     pthread_mutex_unlock(&g_ws_conns_mutex);
-    log_debug("[WS] find conn=%lu -> %s", conn_id, found ? "hit" : "miss");
+    log_debug("[WS] find conn=%llu -> %s",
+              (unsigned long long)conn_id, found ? "hit" : "miss");
     return found;
 }
 
-static void ws_call_done(unsigned long conn_id, const char *json, void *user) {
+static void ws_call_done(uint64_t conn_id, const char *json, void *user) {
     (void)user;
     struct mg_connection *c = ws_conn_find(conn_id);
     if (c) {
         event_push_to(c, json);
     } else {
-        log_warn("[WS] call done for closed conn=%lu (dropped)", conn_id);
+        log_warn("[WS] call done for closed conn=%llu (dropped)",
+                 (unsigned long long)conn_id);
     }
 }
 
@@ -278,26 +284,6 @@ static void handle_ws_message(struct mg_connection *c, const char *data, size_t 
     ws_command_free(&req);
 }
 
-void ws_on_upgrade(struct mg_connection *c) {
-    if (!ws_conn_register(c)) {
-        c->is_draining = 1;
-        return;
-    }
-
-    pthread_mutex_lock(&g_ws_mutex);
-    g_ws_conn = c;
-    pthread_mutex_unlock(&g_ws_mutex);
-
-    if (!g_rt_manager) g_rt_manager = rt_init();
-
-    event_push_with_type_to(c, "system", "{\"status\":\"online\"}");
-    event_push_message_to(c, "WebSocket client connected");
-    log_info("[WS] Connected conn=%lu", c->id);
-}
-
-// ============================================
-//  WebSocket 事件处理
-// ============================================
 void ws_ev_handler(struct mg_connection *c, int ev, void *ev_data) {
     switch (ev) {
         case MG_EV_WS_OPEN: {
@@ -309,7 +295,7 @@ void ws_ev_handler(struct mg_connection *c, int ev, void *ev_data) {
             g_ws_conn = c;
             pthread_mutex_unlock(&g_ws_mutex);
 
-            log_info("[WS] Connected");
+            log_info("[WS] Connected conn=%llu", (unsigned long long)c->id);
             if (!g_rt_manager) g_rt_manager = rt_init();
             
             event_push_with_type_to(c, "system", "{\"status\":\"online\"}");
@@ -355,12 +341,12 @@ void ws_ev_handler(struct mg_connection *c, int ev, void *ev_data) {
         case MG_EV_CLOSE: {
             ws_conn_unregister(c);
 
-            log_info("[WS] Closed conn=%lu", c->id);
+            log_info("[WS] Closed conn=%llu", (unsigned long long)c->id);
             if (g_rt_manager) {
                 int removed = rt_remove_tasks_by_conn(g_rt_manager, c->id);
                 if (removed > 0) {
-                    log_info("[WS] Removed %d task(s) for conn %lu",
-                             removed, c->id);
+                    log_info("[WS] Removed %d task(s) for conn %llu",
+                             removed, (unsigned long long)c->id);
                 }
             }
             break;

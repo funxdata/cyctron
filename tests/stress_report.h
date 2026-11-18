@@ -5,7 +5,7 @@
 //   stress_result_t r = { .suite = "ffi", .case_name = "serial", ... };
 //   stress_report_write(&r);
 //
-// 结果追加写入 $STRESS_REPORT_DIR/stress.jsonl（默认 ./test-results），
+// 结果追加写入 $STRESS_REPORT_DIR/stress.jsonl（默认 ./docs/results），
 // 每行一个 JSON 对象，便于后续用 jq / Deno 汇总。
 #ifndef STRESS_REPORT_H
 #define STRESS_REPORT_H
@@ -110,7 +110,7 @@ static void stress_timestamp(char *buf, size_t size) {
 // 返回结果文件路径；失败返回空字符串
 static void stress_report_path(char *out, size_t out_size) {
     const char *dir = getenv("STRESS_REPORT_DIR");
-    if (!dir || !*dir) dir = "test-results";
+    if (!dir || !*dir) dir = "docs/results";
 
     STRESS_MKDIR(dir);
     snprintf(out, out_size, "%s/stress.jsonl", dir);

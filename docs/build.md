@@ -65,10 +65,11 @@ CMake 会自动把该目录加入 include 并链接 `libffi.a`。
 
 ## 3. 产物
 
-- Windows：项目根目录 `cyctron.exe`
-- Linux/macOS：项目根目录 `cyctron`
+- Windows：`.dytes/cyctron.exe`
+- Linux/macOS：`.dytes/cyctron`
 
-由 `RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}"` 指定。
+由 `RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/.dytes"` 指定；从 `.dytes/`
+启动时 `./libary`、`./web` 指向本地测试资源。
 
 ## 4. 构建插件
 
@@ -77,9 +78,9 @@ CMake 会自动把该目录加入 include 并链接 `libffi.a`。
 ```bash
 cargo build --release --manifest-path examples/libary_demo/Cargo.toml
 # Windows
-cp examples/libary_demo/target/release/libary_demo.dll libary/
+cp examples/libary_demo/target/release/libary_demo.dll .dytes/libary/
 # Linux
-cp examples/libary_demo/target/release/libibary_demo.so libary/libary_demo.so
+cp examples/libary_demo/target/release/libibary_demo.so .dytes/libary/libary_demo.so
 ```
 
 ### sse_demo
@@ -87,9 +88,9 @@ cp examples/libary_demo/target/release/libibary_demo.so libary/libary_demo.so
 ```bash
 cargo build --release --manifest-path examples/sse_demo/Cargo.toml
 # Windows
-cp examples/sse_demo/target/release/sse_demo.dll libary/
+cp examples/sse_demo/target/release/sse_demo.dll .dytes/libary/
 # Linux
-cp examples/sse_demo/target/release/libsse_demo.so libary/sse_demo.so
+cp examples/sse_demo/target/release/libsse_demo.so .dytes/libary/sse_demo.so
 ```
 
 ### soket_demo / rust_demo
@@ -99,12 +100,12 @@ cargo build --release --manifest-path examples/soket_demo/Cargo.toml
 cargo build --release --manifest-path examples/rust_demo/Cargo.toml
 ```
 
-soket 插件的产物通常放到 `./core/`（由 `calldyn.c` 的 `call_local_dyn_socklibffi` 查找）。
+soket 插件的产物通常放到 `./core/soket_demo.<ext>`（由 `calldyn.c` 的 `call_local_dyn_socklibffi` 查找）。
 
 ## 5. 测试构建
 
 ```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
@@ -115,12 +116,11 @@ ctest --test-dir build --output-on-failure
 
 | 工作流 | 平台 | 说明 |
 | --- | --- | --- |
-| `.github/workflows/win.yml` | Windows | MSVC + Ninja，上传 `build/cyctron.exe` |
-| `.github/workflows/linux.yml` | Ubuntu | 构建并运行 `cyctron_tests`（旧目标） |
-| `.github/workflows/mac.yml` | macOS | 构建，临时关闭 tests |
+| `.github/workflows/dytes-release.yml` | Windows / Linux / macOS | tag 触发；按平台构建后调用 `dytes publish` |
 
-CI 读取 `dytes.json` 的 `name`/`version`，上传到又拍云 S3：
-`core/cyctron/<version>/<os>`。
+发布构建使用 `-DBUILD_TESTS=OFF`，不生成测试目标；测试在本地或独立测试任务中运行。
+CI 读取 `dytes.json` 的 `name`/`version`，由 dytes 上传到：
+`core/cyctron/<version>/<platform>`。
 
 ## 7. 常见构建问题
 
@@ -131,7 +131,7 @@ CI 读取 `dytes.json` 的 `name`/`version`，上传到又拍云 S3：
 | `pkg-config` 找不到 libffi | 安装 `libffi-dev` 或设置 `PKG_CONFIG_PATH` |
 | MinGW 链接失败 | 使用 `-G "MinGW Makefiles"`，并确保在 MSYS2 MinGW shell 中 |
 | Release 无控制台 | Windows Release 使用 `-mwindows`；调试用 Debug |
-| `mongoose.c` 编译错误 | 确认 `crates/mongoose` 子模块版本与当前分支匹配 |
+| `mongoose.c` 编译错误 | 确认 `crates/mongoose` 子模块版本与 CMakeLists 期望的版本匹配 |
 
 ## 8. 清理
 

@@ -133,7 +133,7 @@
     <label for="uuidInput">UUID:</label>
     <input type="text" id="uuidInput" value="task-001" style="width:120px;" />
     <label for="libInput">Lib:</label>
-    <input type="text" id="libInput" value="libsoket_demo" style="width:140px;" />
+    <input type="text" id="libInput" value="soket_demo" style="width:140px;" />
     <label for="msgInput">消息内容:</label>
     <input type="text" id="msgInput" placeholder="Hello" style="width:160px;" />
   </div>
@@ -285,7 +285,7 @@
       btn.addEventListener('click', () => {
         const cmd = btn.dataset.cmd;
         const uuid = uuidInput.value.trim() || 'task-001';
-        const lib = libInput.value.trim() || 'libsoket_demo';
+        const lib = libInput.value.trim() || 'soket_demo';
         const msg = msgInput.value.trim() || 'Hello from browser';
 
         switch (cmd) {

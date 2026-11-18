@@ -4,6 +4,7 @@
 #define WS_CALL_H
 
 #include <stddef.h>
+#include "ws_message.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,7 +21,7 @@ enum {
 };
 
 #define WS_CALL_MAX_NAME 128
-#define WS_CALL_MAX_PAYLOAD (1024 * 1024)
+#define WS_CALL_MAX_PAYLOAD WS_MAX_MESSAGE_BYTES
 
 typedef struct {
     char *id;
